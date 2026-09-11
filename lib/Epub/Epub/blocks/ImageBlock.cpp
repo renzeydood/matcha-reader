@@ -59,13 +59,10 @@ bool readValidCacheHeader(HalFile& cacheFile, const int expectedWidth, const int
   return cacheFile.size() >= expectedSize;
 }
 
-// Pages are deserialized afresh on each visit. Keep a bounded, allocation-free
-// record so an image that failed renders its placeholder directly for the rest
-// of the reader session instead of paying another placeholder refresh and
-// decode. The reader clears this on entry so transient memory/storage failures
-// are retried.
-constexpr size_t MAX_SESSION_IMAGE_FAILURES = 16;
-uint64_t failedImageHashes[MAX_SESSION_IMAGE_FAILURES];
+// Suppress repeated failures across the BW/grayscale passes of one page render.
+// Clear before the next page render so transient memory/storage failures retry.
+constexpr size_t MAX_RENDER_IMAGE_FAILURES = 16;
+uint64_t failedImageHashes[MAX_RENDER_IMAGE_FAILURES];
 size_t failedImageCount = 0;
 
 uint64_t imagePathHash(const std::string& path) {
@@ -77,7 +74,7 @@ uint64_t imagePathHash(const std::string& path) {
   return hash;
 }
 
-bool imageFailedThisSession(const std::string& path) {
+bool imageFailedThisRender(const std::string& path) {
   const uint64_t hash = imagePathHash(path);
   for (size_t i = 0; i < failedImageCount; i++) {
     if (failedImageHashes[i] == hash) return true;
@@ -86,7 +83,7 @@ bool imageFailedThisSession(const std::string& path) {
 }
 
 void rememberImageFailure(const std::string& path) {
-  if (failedImageCount == MAX_SESSION_IMAGE_FAILURES || imageFailedThisSession(path)) return;
+  if (failedImageCount == MAX_RENDER_IMAGE_FAILURES || imageFailedThisRender(path)) return;
   failedImageHashes[failedImageCount++] = imagePathHash(path);
 }
 
@@ -344,9 +341,9 @@ bool ImageBlock::hasValidCache() const {
   return readValidCacheHeader(cacheFile, width, height, cachedWidth, cachedHeight);
 }
 
-bool ImageBlock::needsDecode() const { return !imageFailedThisSession(imagePath) && !hasValidCache(); }
+bool ImageBlock::needsDecode() const { return !imageFailedThisRender(imagePath) && !hasValidCache(); }
 
-void ImageBlock::clearSessionRenderFailures() { failedImageCount = 0; }
+void ImageBlock::clearRenderFailures() { failedImageCount = 0; }
 
 void ImageBlock::releaseRenderCache() { releasePxcSlot(); }
 
@@ -423,14 +420,14 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
   // Tiled grayscale (#2190): skip the whole image when it doesn't touch the
   // active band. The per-pixel writer already clips off-band pixels, but without
   // this each of the ~7 bands per plane re-ran the full cache load / pixel walk
-  // and discarded the result — the dominant cost of AA on image pages. The check
+  // and discarded the result â€” the dominant cost of AA on image pages. The check
   // is orientation-aware and returns true when no strip is active, so the BW
   // pass and non-tiled controllers render the image exactly as before.
   if (!renderer.glyphIntersectsStrip(drawX, drawY, drawX + drawW - 1, drawY + drawH - 1)) {
     return;
   }
 
-  if (imageFailedThisSession(imagePath)) {
+  if (imageFailedThisRender(imagePath)) {
     renderPlaceholderAt(renderer, drawX, drawY, drawW, drawH);
     return;
   }
@@ -438,6 +435,7 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
   // Try to render from cache first
   std::string cachePath = getCachePath(imagePath);
   if (renderFromCache(renderer, cachePath, drawX, drawY, drawW, drawH)) {
+    renderer.preserveImagePolarity(drawX, drawY, drawW, drawH);
     return;  // Successfully rendered from cache
   }
 
@@ -511,6 +509,7 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
     return;
   }
 
+  renderer.preserveImagePolarity(drawX, drawY, drawW, drawH);
   LOG_DBG("IMG", "Decode successful");
 }
 

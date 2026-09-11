@@ -67,22 +67,14 @@ void CrossPointWebServerActivity::onEnter() {
 
   LOG_DBG("WEBACT", "Free heap at onEnter: %d bytes", ESP.getFreeHeap());
 
-  // Hand the reader font caches (~15-20K, glyph slabs + hot group) to the WiFi
-  // stack: file transfer never renders book text (this activity's screens use
-  // the built-in UI fonts), and every path where WiFi actually came up leaves
-  // via silentRestart(), so nothing needs restoring. Without this, AP mode on
-  // the X3 bottoms out around 19K free / 16K maxAlloc at server start and dies
-  // by abort() at ~2K maxAlloc after a few captive-portal page serves (field
-  // crash report: abort in the Wi-Fi credentials API handler; "only the
-  // homepage still loads" is the same exhaustion short of the abort). If the
-  // user backs out without starting WiFi, glyph caches reload lazily.
+  // Release rebuildable glyph and SD-font caches before starting WiFi.
   {
     RenderLock lock;
     if (auto* fcm = renderer.getFontCacheManager()) {
       fcm->releaseAllFontMemory();
+      fcm->releaseSdFontCaches();
     }
   }
-  LOG_DBG("WEBACT", "After font release: free=%u maxAlloc=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
   // Reset state
   state = WebServerActivityState::MODE_SELECTION;
@@ -143,8 +135,19 @@ void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) 
     modeName = "Connect to Calibre";
   } else if (mode == NetworkMode::CREATE_HOTSPOT) {
     modeName = "Create Hotspot";
+#if FREEINK_CAP_USB_MSC
+  } else if (mode == NetworkMode::USB_DRIVE) {
+    modeName = "USB Drive";
+#endif
   }
   LOG_DBG("WEBACT", "Network mode selected: %s", modeName);
+
+#if FREEINK_CAP_USB_MSC
+  if (mode == NetworkMode::USB_DRIVE) {
+    activityManager.goToUsbDrive();
+    return;
+  }
+#endif
 
   networkMode = mode;
   isApMode = (mode == NetworkMode::CREATE_HOTSPOT);
@@ -272,6 +275,14 @@ void CrossPointWebServerActivity::startAccessPoint() {
 void CrossPointWebServerActivity::startWebServer() {
   LOG_DBG("WEBACT", "Starting web server...");
 
+  // Repeat the release right before the allocation: the WiFi selection screen
+  // rendered since onEnter(), and a CJK SSID repopulates the SD-font caches.
+  if (auto* fcm = renderer.getFontCacheManager()) {
+    LOG_DBG("WEBACT", "Free heap before SD font cache release: %d bytes", ESP.getFreeHeap());
+    fcm->releaseSdFontCaches();
+    LOG_DBG("WEBACT", "Free heap before server alloc: %d bytes", ESP.getFreeHeap());
+  }
+
   // Create the web server instance
   webServer = makeUniqueNoThrow<CrossPointWebServer>();
   if (!webServer) {
@@ -374,11 +385,11 @@ void CrossPointWebServerActivity::loop() {
         // Yield and check for exit button every 64 iterations
         if ((i & 0x3F) == 0x3F) {
           yield();
-          // Force trigger an update of which buttons are being pressed so be have accurate state
-          // for back button checking
+          // Pump input inside this blocking loop so exit events remain responsive.
           mappedInput.update();
-          // Check for exit button inside loop for responsiveness
-          if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+          // This update consumes the one-shot Home event before ActivityManager
+          // can see it, so handle Home here alongside Back.
+          if (mappedInput.wasReleased(MappedInputManager::Button::Back) || mappedInput.wasHomeGesture()) {
             onGoHome();
             return;
           }
@@ -387,8 +398,8 @@ void CrossPointWebServerActivity::loop() {
       lastHandleClientTime = millis();
     }
 
-    // Handle exit on Back button (also check outside loop)
-    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+    // Also check outside the request-processing loop.
+    if (mappedInput.wasReleased(MappedInputManager::Button::Back) || mappedInput.wasHomeGesture()) {
       onGoHome();
       return;
     }

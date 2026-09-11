@@ -136,6 +136,11 @@ void EpubReaderTranslationActivity::onEnter() {
 void EpubReaderTranslationActivity::onExit() {
   Activity::onExit();
 
+  if (resumedAfterRestart) {
+    silentRestartToReader(/*forceRestart=*/true);
+    return;
+  }
+
   if (!hasPreTranslation && WiFi.getMode() != WIFI_MODE_NULL) {
     WiFi.disconnect(false);
     delay(30);

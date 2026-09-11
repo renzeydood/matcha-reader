@@ -2,10 +2,10 @@
 
 #include <HalStorage.h>
 
-#include <initializer_list>
+#include <memory>
+#include <span>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -36,32 +36,28 @@
  */
 class CssParser {
  public:
+  enum class ParseResult : uint8_t {
+    Complete,
+    Partial,
+    Error,
+  };
+
+  enum class CacheStatus : uint8_t {
+    Missing,
+    Complete,
+    Partial,
+    Invalid,
+  };
+
+  enum class CacheLoadResult : uint8_t {
+    Complete,
+    LowMemory,
+    Invalid,
+  };
+
   // Bump when CSS cache format or rules change; section caches are invalidated when this changes
-  // v10: border byte became a per-edge mask (v9 briefly stored a bool -- same size, new meaning)
-  // v11: +textEmphasis/fontVariant/listStyleType bytes and defined bits 19-21
-  // v12: border-top/bottom/left/right and the font shorthand are parsed; rules
-  //      cached under v11 lack their edges/style bits.
-  // v13: +font-size as a 12th CssLength and defined bit 22 -- the record grew by 5 bytes,
-  //      so a v12 record cannot be read with the v13 layout.
-  // v14: +inkMode (color/background-color polarity) as a 7th trailing enum byte and defined
-  //      bit 23 -- the record grew by 1 byte, so a v13 record mis-parses under v14 framing.
-  // v15: +page-break-{before,after,inside} packed into an 8th trailing enum byte and defined
-  //      bit 24 -- one more byte again, so a v14 record is short by one under v15 framing.
-  // v16: descendant (`A B`) and child (`A>B`) selectors are stored, under a key that is the
-  //      normalized selector itself. The RECORD framing is unchanged; the bump exists because a
-  //      v15 cache was written by a parser that dropped every such rule, so reusing it would
-  //      silently keep the book unstyled with no way to notice.
-  // v17: +line-height as a 13th CssLength and defined bit 25 -- the record grew by 5 bytes
-  //      (77 -> 82 fixed), so a v16 record cannot be read with the v17 framing.
-  // v18: +letter-spacing as a 14th CssLength (defined bit 28) and +text-transform/hyphens packed
-  //      into a 9th trailing enum byte (defined bits 26/27) -- the record grew by 6 bytes
-  //      (82 -> 88 fixed), so a v17 record cannot be read with the v18 framing.
-  // v19: the existing border byte now also packs line style + 1..4px width, and display retains
-  //      inline-block so close-time heading rules can shrink to their text. Framing is unchanged.
-  // v21: CssPropertyFlags::anySet() omitted `border`, so a rule defining ONLY a border was
-  //      discarded before it was stored. Framing is unchanged, but every cache up to v20 is
-  //      missing all of them (145 rules on the EBPAJ template) while still validating cleanly.
-  static constexpr uint8_t CSS_CACHE_VERSION = 21;
+  // Combined flags header and Matcha style payload; incompatible with both parents.
+  static constexpr uint8_t CSS_CACHE_VERSION = 22;
 
   explicit CssParser(std::string cachePath) : cachePath(std::move(cachePath)) {}
   ~CssParser() = default;
@@ -74,9 +70,9 @@ class CssParser {
    * Load and parse CSS from a file stream.
    * Can be called multiple times to accumulate rules from multiple stylesheets.
    * @param source Open file handle to read from
-   * @return true if parsing completed (even if no rules found)
+   * @return Complete unless bounded storage stopped rule growth or the source was invalid
    */
-  bool loadFromStream(HalFile& source);
+  ParseResult loadFromStream(HalFile& source);
 
   /**
    * Look up the style for an HTML element from its tag, its classes and -- when the caller
@@ -108,17 +104,25 @@ class CssParser {
   /**
    * Check if any rules have been loaded
    */
-  [[nodiscard]] bool empty() const { return rulesBySelector_.empty(); }
+  [[nodiscard]] bool empty() const { return entryCount_ == 0; }
 
   /**
    * Get count of loaded rule sets
    */
-  [[nodiscard]] size_t ruleCount() const { return rulesBySelector_.size(); }
+  [[nodiscard]] size_t ruleCount() const { return entryCount_; }
 
   /**
    * Clear all loaded rules
    */
-  void clear() { rulesBySelector_.clear(); }
+  void clear() {
+    entries_.reset();
+    selectorPool_.reset();
+    stylePool_.reset();
+    entryCount_ = entryCapacity_ = 0;
+    selectorPoolSize_ = selectorPoolCapacity_ = 0;
+    styleCount_ = styleCapacity_ = 0;
+    ruleGrowthStopped_ = false;
+  }
 
   /**
    * True if a parse had to drop selectors because the heap ran low (transient condition, NOT
@@ -141,6 +145,9 @@ class CssParser {
    */
   bool hasCache() const;
 
+  /** Read the cache header without hydrating its rule map. */
+  CacheStatus inspectCache() const;
+
   /**
    * Delete CSS rules cache file exists
    */
@@ -150,7 +157,7 @@ class CssParser {
    * Save parsed CSS rules to a cache file.
    * @return true if cache was written successfully
    */
-  bool saveToCache() const;
+  bool saveToCache(bool complete) const;
 
   /**
    * Load CSS rules from a cache file.
@@ -162,7 +169,7 @@ class CssParser {
    * a few dozen. Tag-type selectors are always loaded.
    * @return true if cache was loaded successfully
    */
-  bool loadFromCache(const std::vector<std::string>* usedClasses = nullptr);
+  CacheLoadResult loadFromCache(const std::vector<std::string>* usedClasses = nullptr);
 
   /**
    * Structurally validate the cache file WITHOUT materializing the rule map. Book open only
@@ -210,44 +217,19 @@ class CssParser {
   size_t collectVerticalStyles(std::vector<std::pair<std::string, VerticalBlockStyle>>& out, size_t maxOut = 256) const;
 
  private:
-  // Lookup key for a multi-piece selector: the pieces are hashed and compared as if
-  // concatenated, so a composite key is looked up without materializing the concatenation in
-  // a scratch buffer. The pieces are a caller-owned run (CssSelector::forEachCandidate fills
-  // a stack array), which must outlive the find() call -- as a local array in the calling
-  // scope always does.
-  struct CompositeKey {
-    const std::string_view* first;
-    size_t count;
-    CompositeKey(const std::string_view* p, const size_t n) noexcept : first(p), count(n) {}
-    [[nodiscard]] const std::string_view* begin() const noexcept { return first; }
-    [[nodiscard]] const std::string_view* end() const noexcept { return first + count; }
+  enum class RuleInsertResult : uint8_t {
+    Inserted,
+    Merged,
+    Limit,
+    OutOfMemory,
   };
 
-  // ASCII-case-insensitive transparent hash/equal. Stored selectors and lookup
-  // keys are compared without regard to case, so callers may insert and look up
-  // using whatever case the CSS source or HTML element name happens to use.
-  // Bodies live in CssParser.cpp so they can share the file-local asciiToLower.
-  struct SvHash {
-    using is_transparent = void;
-    size_t operator()(std::string_view sv) const noexcept;
-    size_t operator()(const std::string& s) const noexcept;
-    size_t operator()(CompositeKey k) const noexcept;
-  };
-  struct SvEqual {
-    using is_transparent = void;
-    bool operator()(std::string_view a, std::string_view b) const noexcept;
-    bool operator()(const std::string& a, std::string_view b) const noexcept;
-    bool operator()(std::string_view a, const std::string& b) const noexcept;
-    bool operator()(const std::string& a, const std::string& b) const noexcept;
-    bool operator()(CompositeKey a, std::string_view b) const noexcept;
-    bool operator()(std::string_view a, CompositeKey b) const noexcept;
+  enum class PoolResult : uint8_t {
+    Ready,
+    Limit,
+    OutOfMemory,
   };
 
-  // Storage: maps selector -> style properties. Hash/equal are case-insensitive.
-  // Compound selectors live in the SAME map under their normalized key (".callout p",
-  // "blockquote>p"), so a rule costs no more than a simple one -- only the key string is a
-  // few characters longer, which for real selectors still fits std::string's inline buffer.
-  std::unordered_map<std::string, CssStyle, SvHash, SvEqual> rulesBySelector_;
   bool heapTruncated_ = false;           // see wasHeapTruncated()
   bool cacheLoadFailedForHeap_ = false;  // see cacheLoadFailedForHeap()
 
@@ -266,8 +248,28 @@ class CssParser {
   HalFile cacheAppendFile_;
   uint16_t appendedRuleCount_ = 0;
   bool cacheAppendActive_ = false;
+  bool cacheAppendFailed_ = false;
+  bool promoteCache() const;
 
-  static void writeRuleRecord(HalFile& file, const std::string& selector, const CssStyle& style);
+  struct SelectorEntry {
+    uint32_t offset;
+    uint16_t styleIndex;
+    uint16_t length;
+  };
+  static_assert(sizeof(SelectorEntry) == 8);
+
+  // Bounded flat storage keeps every growth operation fallible and avoids the
+  // throwing node allocations used by std::unordered_map.
+  std::unique_ptr<SelectorEntry[]> entries_;
+  std::unique_ptr<char[]> selectorPool_;
+  std::unique_ptr<CssStyle[]> stylePool_;
+  uint16_t entryCount_ = 0;
+  uint16_t entryCapacity_ = 0;
+  uint32_t selectorPoolSize_ = 0;
+  uint32_t selectorPoolCapacity_ = 0;
+  uint16_t styleCount_ = 0;
+  uint16_t styleCapacity_ = 0;
+  bool ruleGrowthStopped_ = false;
 
   std::string cachePath;
 
@@ -285,7 +287,19 @@ class CssParser {
   };
 
   // Internal parsing helpers
+  bool restoreCacheBackupIfNeeded() const;
   void processRuleBlockWithStyle(std::string_view selectorGroup, const CssStyle& style);
+  [[nodiscard]] const CssStyle* findStyle(std::span<const std::string_view> pieces) const;
+  [[nodiscard]] int compareEntryToPieces(const SelectorEntry& entry, std::span<const std::string_view> pieces) const;
+  [[nodiscard]] size_t lowerBound(std::string_view p0, std::string_view p1, std::string_view p2, bool& exact) const;
+  [[nodiscard]] const CssStyle* findStyle(std::string_view p0, std::string_view p1 = {},
+                                          std::string_view p2 = {}) const;
+  [[nodiscard]] std::string_view selectorAt(size_t index) const;
+  RuleInsertResult insertOrMerge(std::string_view selector, const CssStyle& style);
+  PoolResult ensureEntryCapacity(size_t needed);
+  PoolResult ensureSelectorPoolCapacity(size_t needed);
+  PoolResult ensureStyleCapacity(size_t needed);
+  PoolResult internStyle(const CssStyle& style, uint16_t& indexOut);
   static CssStyle parseDeclarations(std::string_view declBlock);
   static void parseDeclarationIntoStyle(std::string_view decl, CssStyle& style, InkColors& ink);
   /** Fold the block's colours into style.inkMode. Call once, after the block's last declaration. */

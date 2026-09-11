@@ -57,6 +57,7 @@ inline std::string gaijiReplacementText(const std::string& src, const std::strin
   }
   return "\xE3\x80\x93";  // 〓 U+3013 GETA MARK
 }
+#include <cstring>
 
 // Safely tear down an expat parser: stop processing, clear callbacks, free, and null the pointer.
 inline void destroyXmlParser(XML_Parser& parser) {
@@ -66,4 +67,14 @@ inline void destroyXmlParser(XML_Parser& parser) {
   XML_SetCharacterDataHandler(parser, nullptr);
   XML_ParserFree(parser);
   parser = nullptr;
+}
+
+inline const char* xmlLocalName(const char* qName) {
+  if (!qName) return "";
+  const char* const separator = std::strchr(qName, ':');
+  return separator ? separator + 1 : qName;
+}
+
+inline bool xmlLocalNameEquals(const char* qName, const char* expected) {
+  return std::strcmp(xmlLocalName(qName), expected) == 0;
 }

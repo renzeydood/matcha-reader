@@ -16,7 +16,10 @@ void MangaChapterSelectionActivity::onExit() { Activity::onExit(); }
 
 void MangaChapterSelectionActivity::loop() {
   const int totalItems = static_cast<int>(tocEntries.size());
-  const int pageItems = UITheme::getInstance().getNumberOfItemsPerPage(renderer, true, false, true, false);
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const Rect screen = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
+  const int contentTop = screen.y + metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  const int pageItems = GUI.getListPageItems(screen.height - contentTop - metrics.verticalSpacing, false);
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     if (selectorIndex >= 0 && selectorIndex < totalItems) {

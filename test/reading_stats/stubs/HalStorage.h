@@ -4,6 +4,7 @@
 #include <sys/stat.h>
 
 #include <cstdio>
+#include <filesystem>
 #include <string>
 
 // Settable because ctest runs each test as its own parallel process from a shared working
@@ -50,13 +51,9 @@ class HalStorage {
     return stat(testRootPath(p).c_str(), &s) == 0;
   }
   bool mkdir(const char* p, bool = true) {
-    std::string s = testRootPath(p), acc;
-    for (const char c : s) {
-      acc += c;
-      if (c == '/') ::mkdir(acc.c_str(), 0755);
-    }
-    ::mkdir(s.c_str(), 0755);
-    return true;
+    std::error_code ec;
+    std::filesystem::create_directories(testRootPath(p), ec);
+    return !ec;
   }
   bool remove(const char* p) { return ::remove(testRootPath(p).c_str()) == 0; }
   bool openFileForRead(const char*, const char* p, HalFile& out) {

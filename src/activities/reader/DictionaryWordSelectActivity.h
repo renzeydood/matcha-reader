@@ -69,8 +69,10 @@ class DictionaryWordSelectActivity final : public Activity {
   int lineHeight = 0;
 
   std::vector<WordBox> words;
+  bool confirmPressSeen = false;
   int selected = 0;
   uint16_t rowCount = 0;
+  unsigned long lastHorizontalMoveTime = 0;
 
   Dictionary dict;
   bool dictOpenAttempted = false;
@@ -95,8 +97,4 @@ class DictionaryWordSelectActivity final : public Activity {
   int16_t snapshotW = 0;
   int16_t snapshotH = 0;
   int snapshotIdx = -1;
-
-  // The activity is entered while Confirm is still held (long-press trigger):
-  // ignore the stale release until a fresh press is seen.
-  bool confirmPressSeen = false;
 };

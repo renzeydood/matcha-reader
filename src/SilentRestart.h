@@ -4,8 +4,9 @@
 // skips the boot splash and routes straight to a destination. Used to clear
 // heap fragmentation accumulated during a wifi session.
 
-void silentRestart();          // home screen
-void silentRestartToReader();  // currently-open EPUB (APP_STATE.openEpubPath)
+void silentRestart();  // home screen
+// Force a reboot when there is no reader activity underneath (translation resumed at boot).
+void silentRestartToReader(bool forceRestart = false);
 
 // Straight into the Translation activity, re-reading the page text the activity
 // stashed at TRANSLATE_STASH_PATH before restarting. Used when the TLS/WiFi heap
@@ -19,3 +20,6 @@ void silentRestartToTranslation();
 // setup(). On SD, not RTC_NOINIT: a page of CJK text (2-6KB) doesn't fit the
 // ~2.6KB of RTC slow memory left.
 constexpr const char* TRANSLATE_STASH_PATH = "/system/translate_pending.txt";
+// Reboots immediately after an activity releases exclusive raw storage. The
+// RTC target ensures setup() lands on Home instead of resuming a reader.
+void restartToHomeAfterStorageHandoff();

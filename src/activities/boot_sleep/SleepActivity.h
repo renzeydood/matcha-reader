@@ -1,7 +1,10 @@
 #pragma once
+#include <string>
+
 #include "activities/Activity.h"
 
 class Bitmap;
+class HalFile;
 
 class SleepActivity final : public Activity {
  public:
@@ -15,8 +18,12 @@ class SleepActivity final : public Activity {
   void renderCustomSleepScreen() const;
   void renderCoverSleepScreen() const;
   void renderTransparentSleepScreen() const;
-  void renderBitmapSleepScreen(const Bitmap& bitmap, bool overlay = false) const;
+  void renderBitmapSleepScreen(const Bitmap& bitmap, bool preserveBackground = false) const;
+  bool renderSleepOverlayFile(HalFile& file, const char* pathForLog) const;
+  bool renderTransparentOverlayPng(const std::string& path) const;
+  bool renderSleepOverlayPath(const std::string& path) const;
   void renderLastScreenSleepScreen() const;
+  void renderTransparentCustomSleepScreen() const;
   void renderBlankSleepScreen() const;
   // Scan dirPath for BMP wallpapers (plus PNGs in overlay mode) and render a random one
   // (excluding recently shown). overlay=true draws it over the retained framebuffer instead

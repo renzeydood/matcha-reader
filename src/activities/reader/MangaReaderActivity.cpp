@@ -69,7 +69,21 @@ void MangaReaderActivity::onEnter() {
   // Press-driven entry leaves a release pending; release/touch-driven entry does not.
   ignoreNextConfirmRelease = mappedInput.isPressed(MappedInputManager::Button::Confirm);
 
-  if (!book) return;
+  if (!book && !initialPath.empty()) {
+    sdFontSystem.releaseForImageDecode(renderer);
+    book = makeUniqueNoThrow<manga::MangaBook>(initialPath);
+    if (!book || !book->load()) {
+      LOG_ERR("MRA", "Failed to load manga: %s", initialPath.c_str());
+      book.reset();
+      sdFontSystem.ensureLoaded(renderer);
+      finish();
+      return;
+    }
+  }
+  if (!book) {
+    finish();
+    return;
+  }
 
   // Which layout this book's panel crops use. Newer conversions put them in a subfolder so the
   // book folder holds only page images: MangaBook::scanImages() walks every entry on open, and on

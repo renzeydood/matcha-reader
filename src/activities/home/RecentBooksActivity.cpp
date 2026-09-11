@@ -827,11 +827,12 @@ void RecentBooksActivity::loop() {
     coverWorkerCancelRequested_ = true;
   }
 
-  const int pageItems = UITheme::getInstance().getNumberOfItemsPerPage(renderer, true, false, true, true);
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   const int contentHeight =
       renderer.getScreenHeight() - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
+
+  const int pageItems = std::max(1, contentHeight / metrics.listWithSubtitleRowHeight);
 
   if (openShelfIndex >= 0) {
     if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {

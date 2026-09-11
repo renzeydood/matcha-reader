@@ -161,7 +161,8 @@ namespace {
 // v75: a font-size on <html>/<body> is ignored -- it restates the base size, which IS the
 //      reader's own font here, so honouring it sized whole books off the user's setting.
 //      Cached pages hold the shrunken layout and its line positions.
-constexpr uint8_t SECTION_FILE_VERSION = 75;
+constexpr uint8_t SECTION_FILE_VERSION = 76;
+// v76: Combined Matcha layout and CrossPoint tables, bidi, ruby, and page links.
 // Written into the version field while a build is in progress; patched to
 // SECTION_FILE_VERSION only when the build is finalized. An abandoned /
 // crash-interrupted .bin therefore carries version 0, which loadSectionFile rejects
@@ -526,20 +527,17 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void(
       std::vector<std::string> usedClasses;
       collectHtmlClasses(ctx->parsePath, usedClasses, 64);
       LOG_DBG("SCT", "%u distinct classes in chapter html", static_cast<unsigned>(usedClasses.size()));
-      if (!ctx->cssParser->loadFromCache(&usedClasses)) {
+      const CssParser::CacheLoadResult cacheResult = ctx->cssParser->loadFromCache(&usedClasses);
+      if (cacheResult == CssParser::CacheLoadResult::LowMemory) {
+        LOG_ERR("SCT", "Insufficient heap to hydrate CSS; section build deferred");
+        ctx->cssParser->clear();
+        file.close();
+        Storage.remove(binTmpPath().c_str());
+        if (!ctx->reusedHtml) Storage.remove(ctx->tmpHtmlPath.c_str());
+        return false;
+      }
+      if (cacheResult == CssParser::CacheLoadResult::Invalid) {
         LOG_ERR("SCT", "Failed to load CSS from cache");
-        // Low heap is the one failure where retrying can succeed: the cache file is VALID, the
-        // rule table just doesn't fit right now. Building anyway would persist this chapter
-        // UNSTYLED as a valid section -- permanent wrong layout. Abort; the next open retries.
-        // A genuinely missing/absent cache (flag false) still builds unstyled, as before.
-        if (ctx->cssParser->cacheLoadFailedForHeap()) {
-          LOG_ERR("SCT", "CSS cache didn't fit in heap; aborting section build for retry");
-          ctx->cssParser->clear();
-          file.close();
-          Storage.remove(binTmpPath().c_str());
-          if (!reusedHtml) Storage.remove(tmpHtmlPath.c_str());
-          return false;
-        }
       }
     }
   }

@@ -90,11 +90,13 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
-### Version 70 (fork numbering)
+### Version 76 (merged fork numbering)
 
 Each file in `sections/*.bin` stores one laid-out spine section. The header is
 also the cache-busting key: if any layout-affecting setting differs from the
 current reader settings, the section is discarded and rebuilt.
+
+Version 76 combines Matcha per-word font IDs, ruby and section footnotes with upstream internal-link geometry and focus-boundary layout. Older section caches are rebuilt.
 
 Version 75 is binary-identical to version 74. The version was bumped because a
 `font-size` on `<html>` or `<body>` is no longer applied to layout: it restates
@@ -107,6 +109,42 @@ gains a fifth `uint32_t` offset and a `uint32_t` entry per page for the
 visible-text offset LUT. The fork additionally appends a section-wide footnote
 table whose offset sits in the file's final 4 bytes. The other section LUTs
 remain unchanged.
+Version 44 appends the internal-link rectangles produced during text layout to
+each serialized page. The reader uses these rectangles for touch navigation;
+older caches are rebuilt because they contain no link geometry.
+
+Version 43 keeps the version 42 serialized layout unchanged. It was bumped
+because paragraph base direction now excludes direction changes from inline
+elements.
+
+Version 42 keeps the version 41 serialized layout unchanged. It was bumped
+because closing a block now strips inherited vertical margins and padding.
+
+Version 41 keeps the version 40 serialized layout unchanged. It was bumped
+because simple HTML table rows are now laid out as positioned columns rather
+than flattened paragraphs with synthetic row/cell labels.
+
+Version 40 keeps the version 39 serialized layout unchanged. It was bumped
+because ruby groups now remain intact when large text blocks are soft-flushed.
+
+Version 39 keeps the version 38 serialized layout unchanged. It was bumped
+because image top margins are now clamped to keep full-height images within the
+page viewport.
+
+Version 38 keeps the version 37 serialized layout unchanged. It was bumped
+because Focus Reading now permits line breaks at visible hyphens and dashes
+and hyphenates focus-split words as a whole, changing cached page layout.
+
+Version 37 increases the fixed-size footnote href field from 96 to 256 bytes.
+This changes each serialized footnote record from 128 to 288 bytes, so older
+section caches must be discarded and rebuilt.
+
+Version 36 keeps the version 35 serialized layout unchanged. It was bumped
+because ruby and justified text positioning and CJK line breaking now use
+corrected word measurements, so version 35 cached page layouts no longer match.
+
+Version 35 adds a header offset and a `uint32_t` entry per page for the
+visible-text offset LUT. The other section LUTs remain unchanged.
 
 Version 34 is binary-identical to version 33. The version was bumped because
 word-gap suppression was narrowed to tokens glued together in the source: v33
@@ -144,10 +182,10 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 35
+#define EXPECTED_VERSION 41
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
-#define FOOTNOTE_HREF_LEN 96
+#define FOOTNOTE_HREF_LEN 256
 
 struct String {
     u32 length [[hidden, comment("String byte length")]];
@@ -226,6 +264,7 @@ struct TextBlock {
 
 struct ImageBlock {
     String imagePath;
+    String srcPath;
     s16 width;
     s16 height;
 };
@@ -375,3 +414,14 @@ repeated count times:
 Only kanji-bearing base texts are stored. The file is capped at 16KB; overflow pairs
 are silently dropped (the glossary is best-effort). Distinct readings for the same
 base text may appear as separate records; lookup joins them with '・'.
+
+## Merged CSS cache (version 22)
+
+The header contains a `uint8_t` version, a `uint8_t` partial-flags field and a
+`uint16_t` record count. Each selector record carries an 88-byte style payload,
+including Matcha font size, line height, letter spacing and vertical-text properties.
+Scoped horizontal/vertical selectors and compound selectors remain supported.
+Duplicate records from incremental flushes merge in source order when loaded.
+Chapter loading filters records instead of hydrating the entire book table.
+Writes use a temporary file and backup promotion; incomplete writes preserve the
+previous cache. Older CSS caches are rebuilt.

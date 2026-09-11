@@ -31,8 +31,6 @@ class UITheme {
                                       TextVerticalAlignment verticalAlignment = TextVerticalAlignment::CENTER);
   void reload();
   void setTheme(CrossPointSettings::UI_THEME type);
-  static int getNumberOfItemsPerPage(const GfxRenderer& renderer, bool hasHeader, bool hasTabBar, bool hasButtonHints,
-                                     bool hasSubtitle, int extraReservedHeight = 0);
   static std::string getCoverThumbPath(std::string coverBmpPath, int coverHeight);
   // Draws a cover thumbnail at (x, y), scaled to coverHeight. Handles both cover kinds:
   // the BMP thumbnails generated for EPUB/XTC and the JPG/PNG a manga carries as its own

@@ -65,6 +65,7 @@ class ActivityManager {
   // Whether to trigger a render after the current loop()
   // This variable must only be set by the main loop, to avoid race conditions
   std::atomic<bool> requestedUpdate{false};
+  bool recoveryMode = false;
 
  public:
   explicit ActivityManager(GfxRenderer& renderer, MappedInputManager& mappedInput)
@@ -75,6 +76,7 @@ class ActivityManager {
   ~ActivityManager() { assert(false); /* should never be called */ };
 
   void begin();
+  void setRecoveryMode() { recoveryMode = true; }
   void loop();
 
   // Will replace currentActivity and drop all activities on stack
@@ -83,6 +85,7 @@ class ActivityManager {
   // goTo... functions are convenient wrapper for replaceActivity()
   void goToFileTransfer();
   void goToReadingStats();
+  void goToUsbDrive();
   void goToSettings();
   void goToFileBrowser(std::string path = {});
   void goToRecentBooks();
@@ -92,7 +95,7 @@ class ActivityManager {
   void goToBoot();
   void goToFullScreenMessage(std::string message, EpdFontFamily::Style style = EpdFontFamily::REGULAR);
   void goToCrashReport();
-  void goHome(HomeMenuItem initialMenuItem = HomeMenuItem::NONE);
+  void goHome(HomeMenuItem initialMenuItem = HomeMenuItem::NONE, bool cleanInitialRefresh = false);
 
   // This will move current activity to stack instead of deleting it
   void pushActivity(std::unique_ptr<Activity>&& activity);
@@ -102,6 +105,7 @@ class ActivityManager {
   void popActivity();
 
   bool preventAutoSleep() const;
+  bool requiresExclusiveStorageLoop() const;
   bool isReaderActivity() const;
   bool handleForcedRefresh();
   bool skipLoopDelay() const;

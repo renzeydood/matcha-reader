@@ -7,9 +7,8 @@
 #include <vector>
 
 #include "CrossPointSettings.h"
-#include "activities/Activity.h"
+#include "activities/UiTabListActivity.h"
 #include "components/OptionPopup.h"
-#include "util/ButtonNavigator.h"
 
 enum class SettingType { TOGGLE, ENUM, ACTION, VALUE, STRING };
 
@@ -26,6 +25,7 @@ enum class SettingAction {
   Language,
   DownloadFonts,
   TextSettings,
+  KeyboardLayouts,
 };
 
 struct SettingInfo {
@@ -111,7 +111,7 @@ struct SettingInfo {
     return s;
   }
 
-  static SettingInfo String(StrId nameId, char* ptr, size_t maxLen, const char* key = nullptr,
+  static SettingInfo String(StrId nameId, const char* ptr, size_t maxLen, const char* key = nullptr,
                             StrId category = StrId::STR_NONE_OPT) {
     SettingInfo s;
     s.nameId = nameId;
@@ -167,8 +167,7 @@ struct SettingInfo {
   }
 };
 
-class SettingsActivity final : public Activity {
-  ButtonNavigator buttonNavigator;
+class SettingsActivity final : public UiTabListActivity {
   int initialCategory = 0;
   bool finishOnBack = false;
   bool japaneseBook = false;
@@ -188,7 +187,6 @@ class SettingsActivity final : public Activity {
   bool mangaMode = false;
 
   int selectedCategoryIndex = 0;  // Currently selected category
-  int selectedSettingIndex = 0;
   int settingsCount = 0;
 
   // Per-category settings derived from shared list + device-only actions
@@ -205,8 +203,36 @@ class SettingsActivity final : public Activity {
 
   OptionPopup optionPopup;
 
+  // Row structure (label/actionValue) for *currentSettings, rebuilt only when
+  // the active category or a category's setting list changes
+  // (rebuildRowItems(), called from selectCategory()/rebuildSettingsLists())
+  // — not on every repaint. rowValues_ holds the live per-row value text,
+  // refreshed every buildScreen() call by assigning into the existing
+  // strings (no vector growth).
+  std::vector<std::string> rowValues_;
+  std::vector<freeink::ui::ListItem> rowItems_;
+  void rebuildRowItems();
+
   static constexpr int categoryCount = 4;
-  static const StrId categoryNames[categoryCount];
+  static constexpr StrId categoryNames[categoryCount] = {StrId::STR_CAT_DISPLAY, StrId::STR_CAT_READER,
+                                                         StrId::STR_CAT_CONTROLS, StrId::STR_CAT_SYSTEM};
+
+  // --- UiTabListActivity contract ---
+  int listCount() const override { return settingsCount; }
+  int tabCount() const override { return categoryCount; }
+  int activeTab() const override { return selectedCategoryIndex; }
+  const char* tabLabel(int index) const override { return I18N.get(categoryNames[index]); }
+  void buildScreen(UiScreen& screen) override;
+  void activateIndex(int index) override;
+  void onTabAction(int index) override;
+  void stepTab(int direction) override;
+  bool handleButtons() override;
+  void navigateButtons() override;
+  bool handleCustomInput() override;
+
+  static std::string settingValueText(const SettingInfo& setting);
+  void selectCategory(int categoryIndex);
+  void applyUiSettingChange(uint8_t CrossPointSettings::* valuePtr);
 
   void enterCategory(int categoryIndex);
   void toggleCurrentSetting();
@@ -227,7 +253,7 @@ class SettingsActivity final : public Activity {
                             std::string dictionaryLanguage = {}, const bool showReaderToggles = false,
                             const bool verticalTextEnabled = false, const bool furiganaEnabled = false,
                             const bool mangaMode = false, const bool hideMangaOnlySettings = false)
-      : Activity("Settings", renderer, mappedInput),
+      : UiTabListActivity("Settings", renderer, mappedInput),
         initialCategory(initialCategory),
         finishOnBack(finishOnBack),
         japaneseBook(japaneseBook),
@@ -239,6 +265,5 @@ class SettingsActivity final : public Activity {
         hideMangaOnlySettings(hideMangaOnlySettings) {}
   void onEnter() override;
   void onExit() override;
-  void loop() override;
   void render(RenderLock&&) override;
 };

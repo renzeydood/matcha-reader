@@ -20,6 +20,8 @@ class Reader;
 
 class MangaReaderActivity final : public Activity {
  public:
+  explicit MangaReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string path)
+      : Activity("MangaReader", renderer, mappedInput), initialPath(std::move(path)) {}
   explicit MangaReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                std::unique_ptr<manga::MangaBook> book)
       : Activity("MangaReader", renderer, mappedInput), book(std::move(book)) {}
@@ -32,6 +34,7 @@ class MangaReaderActivity final : public Activity {
   ScreenshotInfo getScreenshotInfo() const override;
 
  private:
+  std::string initialPath;
   std::unique_ptr<manga::MangaBook> book;
 
   uint32_t currentPage = 0;

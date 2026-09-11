@@ -1,5 +1,20 @@
 # Matcha Reader, a Japanese learning fork of CrossPoint
 
+> **X4 Pro development:** integration with current CrossPoint is in progress on `feature/x4pro`. This branch is not yet a validated firmware build. See the [integration log](docs/x4pro-merge-resolution-log.md).
+
+The experimental X4 Pro integration adds CrossPoint's touch reader toolbar while retaining Matcha's Japanese reading controls under **Reader Settings**. Build checks and on-device validation are tracked separately in the integration log.
+
+For experimental installation and testing, see the [device and emulator test guide](docs/x4pro-install-and-test.md). Both firmware targets compile; emulator compatibility and physical-device behavior remain unvalidated.
+
+On the experimental branch, SD recovery starts with built-in fonts and default settings,
+bypassing saved settings, SD fonts and automatic book reopening. On X4 Pro, hold **Down**
+while waking with **Power** to enter recovery; Home and light-panel shortcuts are disabled
+there. To leave recovery, release the wake buttons, then hold **Power** for two
+seconds to restart. A pending firmware update opens Home first and is accepted only after its first
+render completes. This defers software acceptance; automatic rollback still depends on
+the bootloader installed on the device. See the [boot review](docs/x4pro-boot-review.md)
+for remaining limitations and the recovery test checklist.
+
 A fork of [CrossPoint](https://github.com/crosspoint-reader/crosspoint-reader) e-reader firmware for the Xteink X4 and X3, built for reading Japanese. Vertical text, instant dictionary lookup with verb deinflection, a manga panel reader, and page translation, all on e-ink.
 
 It includes all features of upstream CrossPoint and runs on any supported X4 or X3. You can try it first in the [emulator](https://github.com/eszter007/Crosspoint-Emulator-Matcha).
@@ -80,6 +95,8 @@ Manga counts the same as EPUBs. Language comes from the book, so set `--language
 ### Transparent sleep screen
 
 A wallpaper laid over the page you were reading, so the book shows through instead of being covered. Set **Sleep Screen** to **Transparent** and drop 480x800 BMPs into `.sleep/transparent/` on the card. Images with plenty of white space work best, since anything solid hides the text under it. See [§3.7](USER_GUIDE.md#37-sleep-screen).
+
+On the experimental integration branch, `/sleep-overlay.bmp`, `/sleep-overlay.png`, and images in `/.sleep-overlay/` (or `/sleep-overlay/`) take priority when present. Existing `.sleep/transparent/` and `/sleep/transparent/` artwork remains a fallback.
 
 <p align="center"><img src="docs/images/screenshots/sleep-screen-transparent.png" width="260" alt="Sleep wallpaper over the page text, which stays readable behind it"></p>
 
