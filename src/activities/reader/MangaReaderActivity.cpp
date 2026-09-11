@@ -436,9 +436,12 @@ void MangaReaderActivity::loop() {
     requestUpdate();
   }
 
+  const auto touch = ReaderUtils::detectTouchPageTurn(renderer, mappedInput);
+
   if (automaticPageTurnActive) {
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) ||
-        mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+        mappedInput.wasReleased(MappedInputManager::Button::Back) || touch.prev || touch.next ||
+        ReaderUtils::isTouchMenuGesture(renderer, mappedInput)) {
       automaticPageTurnActive = false;
       requestUpdate();
       return;
@@ -469,6 +472,11 @@ void MangaReaderActivity::loop() {
   }
 
   if (viewMode == ViewMode::TextOverlay) {
+    if (ReaderUtils::isTouchMenuGesture(renderer, mappedInput)) {
+      viewMode = ViewMode::PanelZoom;
+      requestUpdate();
+      return;
+    }
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
       viewMode = ViewMode::PanelZoom;
       requestUpdate();
@@ -502,7 +510,8 @@ void MangaReaderActivity::loop() {
     return;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) ||
+      ReaderUtils::isTouchMenuGesture(renderer, mappedInput)) {
     if (ignoreNextConfirmRelease) {
       ignoreNextConfirmRelease = false;
     } else if (viewMode == ViewMode::PanelZoom || viewMode == ViewMode::FullPage) {
@@ -511,7 +520,9 @@ void MangaReaderActivity::loop() {
     }
   }
 
-  const auto [prevTriggered, nextTriggered, fromTilt] = ReaderUtils::detectPageTurn(mappedInput);
+  const auto [buttonPrevTriggered, buttonNextTriggered, fromTilt] = ReaderUtils::detectPageTurn(mappedInput);
+  const bool prevTriggered = buttonPrevTriggered || touch.prev;
+  const bool nextTriggered = buttonNextTriggered || touch.next;
   if (!prevTriggered && !nextTriggered) {
     // Idle tick: after a dwell, warm the pixel cache the user is most likely to need next so the
     // render hits it instead of a fresh JPEG decode. Dwell gates and ordering rationale live with

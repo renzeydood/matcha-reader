@@ -1,39 +1,46 @@
 #pragma once
+#include <I18n.h>
 #include <MangaPanel.h>
 
 #include <string>
 #include <vector>
 
 #include "../../BookmarkEntry.h"
-#include "../Activity.h"
-#include "util/ButtonNavigator.h"
+#include "activities/UiListActivity.h"
+#include "components/OptionPopup.h"
 
 // Manga bookmark list. Unlike EpubReaderBookmarksActivity, a manga bookmark's
 // position is a plain page index (computedChapterProgress) -- there's no
 // spine/xpath to resolve, so "open" just returns that page number directly.
-class MangaBookmarksActivity final : public Activity {
+class MangaBookmarksActivity final : public UiListActivity {
   std::string bookPath;
   std::vector<manga::TocEntry> tocEntries;
-  ButtonNavigator buttonNavigator;
-  int selectorIndex = 0;
   std::vector<BookmarkEntry> bookmarks;
-  int confirmingDelete = 0;  // 0 = hide dialog, 1 = show dialog, 2 = allow confirmation to delete
+  std::vector<std::string> bookmarkSubtitles;
+  std::vector<freeink::ui::ListItem> bookmarkRowItems;
+  bool confirmingDelete = false;
+  OptionPopup confirmPopup;
 
  public:
   explicit MangaBookmarksActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string bookPath,
                                   std::vector<manga::TocEntry> tocEntries)
-      : Activity("MangaBookmarks", renderer, mappedInput),
+      : UiListActivity("MangaBookmarks", renderer, mappedInput, /*wantsTouchLongPress=*/true),
         bookPath(std::move(bookPath)),
         tocEntries(std::move(tocEntries)) {}
   void onEnter() override;
-  void onExit() override;
-  void loop() override;
   void render(RenderLock&&) override;
 
  private:
-  // Calculate the vertical space to reserve for button hints based on orientation
-  int getGutterBottom(const GfxRenderer& renderer);
+  int listCount() const override { return static_cast<int>(bookmarks.size()); }
+  void buildScreen(UiScreen& screen) override;
+  void activateIndex(int index) override;
+  void onRowLongPress(int index) override;
+  bool handleCustomInput() override;
+  bool handleButtons() override;
+  const char* headerTitle() const override { return tr(STR_BOOKMARKS); }
 
-  // Calculate the height available for the bookmark list based on orientation
-  int getListHeight(const GfxRenderer& renderer);
+  void rebuildBookmarkRowItems();
+  void openSelectedBookmark();
+  void showDeleteConfirmation();
+  void deleteSelectedBookmark();
 };

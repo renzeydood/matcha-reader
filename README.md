@@ -60,7 +60,7 @@ Translates the current page to English with Gemini. Works in any book, not only 
 
 ### Manga panel reader
 
-Panels are detected at conversion time, along with their text and translations, so lookup and translation work offline and appear instantly. Move panel by panel in reading order, each one scaled to fill the screen.
+Panels are detected at conversion time, along with their text and translations, so lookup and translation work offline and appear instantly. Move panel by panel in reading order, each one scaled to fill the screen. On touch devices, manga reading follows the same page-turn tap/swipe and center/menu gestures as EPUB reading. Manga chapter and bookmark lists support tap-to-open and swipe scrolling; long-press a manga bookmark to delete it.
 
 **Rotate Panels** (Settings, on by default) turns a panel whose shape does not match the screen, so a wide panel fills the display and you turn the device to read it. Switch it off to keep every panel upright inside the current orientation. **Panels Only** skips the full page overviews. Both are covered in [§6.4](USER_GUIDE.md#64-reading-manga).
 

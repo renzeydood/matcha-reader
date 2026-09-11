@@ -1,170 +1,36 @@
 #include "MangaBookmarksActivity.h"
 
 #include <GfxRenderer.h>
-#include <HalStorage.h>
 #include <I18n.h>
-#include <util/BookmarkUtil.h>
-
-#include <algorithm>
 
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/BookmarkFile.h"
 
+namespace fui = freeink::ui;
+
 namespace {
 constexpr int ENTER_DELETE_MODE_MS = 700;
-constexpr int DELETE_MODE_OFF = 0;
-constexpr int DELETE_MODE_DISPLAY = 1;
-constexpr int DELETE_MODE_CONFIRM = 2;
-
-// Layout constants used in renderScreen
-constexpr int LINE_HEIGHT = 60;
-}  // namespace
+}
 
 void MangaBookmarksActivity::onEnter() {
-  Activity::onEnter();
+  UiListActivity::onEnter();
 
   if (!BookmarkFile::load(bookPath, bookmarks)) {
     bookmarks.shrink_to_fit();
   }
   LOG_DBG("MNG", "Loaded %d bookmarks for book: %s", static_cast<int>(bookmarks.size()), bookPath.c_str());
-
-  // Trigger first update
-  requestUpdate();
+  rebuildBookmarkRowItems();
 }
 
-void MangaBookmarksActivity::onExit() { Activity::onExit(); }
+void MangaBookmarksActivity::rebuildBookmarkRowItems() {
+  bookmarkSubtitles.clear();
+  bookmarkRowItems.clear();
+  bookmarkSubtitles.reserve(bookmarks.size());
+  bookmarkRowItems.reserve(bookmarks.size());
 
-int MangaBookmarksActivity::getGutterBottom(const GfxRenderer& renderer) {
-  const auto orientation = renderer.getOrientation();
-  const bool isPortrait = orientation == GfxRenderer::Orientation::Portrait;
-  return isPortrait ? 75 : 40;  // Reserve vertical space for button hints at the bottom
-}
-
-int MangaBookmarksActivity::getListHeight(const GfxRenderer& renderer) {
-  const auto pageHeight = renderer.getScreenHeight();
-  return pageHeight - getGutterBottom(renderer) - LINE_HEIGHT;  // Reserve vertical space for title and button hints
-}
-
-void MangaBookmarksActivity::loop() {
-  // Delete confirmation mode
-  if (confirmingDelete >= DELETE_MODE_DISPLAY) {
-    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-      if (confirmingDelete == DELETE_MODE_DISPLAY) {
-        confirmingDelete = DELETE_MODE_CONFIRM;  // first confirmation, update text
-        requestUpdate();
-        return;
-      }
-      bookmarks.erase(bookmarks.begin() + selectorIndex);
-      if (!BookmarkFile::save(bookPath, bookmarks)) {
-        LOG_ERR("MNG", "Failed to save bookmarks after delete");
-      }
-
-      // Move selector up if we deleted the last item
-      if (selectorIndex >= bookmarks.size() && selectorIndex > 0) {
-        selectorIndex--;
-      }
-
-      if (bookmarks.empty()) {
-        ActivityResult result;
-        result.isCancelled = true;
-        setResult(std::move(result));
-        finish();
-        return;
-      }
-
-      requestUpdate();
-      confirmingDelete = DELETE_MODE_OFF;
-      return;
-    } else if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-      requestUpdate();
-      confirmingDelete = DELETE_MODE_OFF;
-      return;
-    }
-  }
-
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {  // Open
-    if (bookmarks.empty()) {
-      return;
-    }
-    const auto& bookmark = bookmarks.at(selectorIndex);
-    setResult(PageResult{bookmark.computedChapterProgress});
-    finish();
-    return;
-  } else if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    ActivityResult result;
-    result.isCancelled = true;
-    setResult(std::move(result));
-    finish();
-    return;
-  }
-
-  if (mappedInput.isPressed(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() > ENTER_DELETE_MODE_MS) {
-    if (bookmarks.empty()) {
-      return;
-    }
-    confirmingDelete = DELETE_MODE_DISPLAY;
-    requestUpdate();
-  }
-
-  buttonNavigator.onNextRelease([this] {
-    selectorIndex = ButtonNavigator::nextIndex(selectorIndex, bookmarks.size());
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousRelease([this] {
-    selectorIndex = ButtonNavigator::previousIndex(selectorIndex, bookmarks.size());
-    requestUpdate();
-  });
-
-  buttonNavigator.onNextContinuous([this] {
-    selectorIndex = ButtonNavigator::nextPageIndex(selectorIndex, bookmarks.size(),
-                                                   GUI.getListPageItems(getListHeight(renderer), true));
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousContinuous([this] {
-    selectorIndex = ButtonNavigator::previousPageIndex(selectorIndex, bookmarks.size(),
-                                                       GUI.getListPageItems(getListHeight(renderer), true));
-    requestUpdate();
-  });
-}
-
-void MangaBookmarksActivity::render(RenderLock&&) {
-  renderer.clearScreen();
-
-  const auto pageWidth = renderer.getScreenWidth();
-  const auto pageHeight = renderer.getScreenHeight();
-  const auto orientation = renderer.getOrientation();
-  // Landscape orientation: reserve a horizontal gutter for button hints.
-  const bool isLandscapeCw = orientation == GfxRenderer::Orientation::LandscapeClockwise;
-  const bool isLandscapeCcw = orientation == GfxRenderer::Orientation::LandscapeCounterClockwise;
-  // Inverted portrait: reserve vertical space for hints at the top.
-  const bool isPortraitInverted = orientation == GfxRenderer::Orientation::PortraitInverted;
-  const bool isPortrait = orientation == GfxRenderer::Orientation::Portrait;
-  const int hintGutterWidth = (isLandscapeCw || isLandscapeCcw) ? 40 : 0;
-  // Landscape CW places hints on the left edge; CCW keeps them on the right.
-  const int contentX = isLandscapeCw ? hintGutterWidth : 0;
-  const int contentWidth = pageWidth - hintGutterWidth;
-  const int hintGutterHeight = isPortraitInverted ? 50 : 0;
-  const int hintGutterBottom = getGutterBottom(renderer);
-  const int contentY = hintGutterHeight;
-  const int listY = contentY + LINE_HEIGHT;  // Reserve vertical space for title
-  const int listHeight = getListHeight(renderer);
-  const int numBookmarks = bookmarks.size();
-
-  // Manual centering to honor content gutters.
-  const int titleX =
-      contentX + (contentWidth - renderer.getTextWidth(UI_12_FONT_ID, tr(STR_BOOKMARKS), EpdFontFamily::BOLD)) / 2;
-  renderer.drawText(UI_12_FONT_ID, titleX, 15 + contentY, tr(STR_BOOKMARKS), true, EpdFontFamily::BOLD);
-
-  const auto getBookmarkTitle = [this](int index) {
-    return bookmarks.at(confirmingDelete >= DELETE_MODE_DISPLAY ? selectorIndex : index).summary;
-  };
-  const auto getBookmarkSubtitle = [this](int index) {
-    const auto& bookmark = bookmarks.at(confirmingDelete >= DELETE_MODE_DISPLAY ? selectorIndex : index);
-    // Chapter title: last TOC entry whose page is at or before the bookmark's page.
+  for (const auto& bookmark : bookmarks) {
     std::string chapterTitle = tr(STR_UNNAMED);
     for (const auto& entry : tocEntries) {
       if (entry.pageIndex <= bookmark.computedChapterProgress) {
@@ -178,34 +44,155 @@ void MangaBookmarksActivity::render(RenderLock&&) {
     if (!tocEntries.empty()) {
       subtitle += " - " + chapterTitle;
     }
-    return subtitle;
-  };
-  const auto getBookmarkIcon = [isPortrait](int index) {
-    // only enabled icon in portrait mode due to limitation with rotating icons for other orientations
-    return isPortrait ? UIIcon::Bookmark : UIIcon::None;
-  };
+    bookmarkSubtitles.push_back(std::move(subtitle));
 
-  if (numBookmarks > 0) {
-    if (confirmingDelete >= DELETE_MODE_DISPLAY) {
-      GUI.drawHelpText(renderer, Rect{0, pageHeight / 2 - LINE_HEIGHT * 2, contentWidth, LINE_HEIGHT},
-                       tr(STR_CONFIRM_DELETE_BOOKMARK));
+    fui::ListItem item;
+    item.label = bookmark.summary.c_str();
+    item.subtitle = bookmarkSubtitles.back().c_str();
+    item.icon = listIconFor(UIIcon::Bookmark, 32);
+    item.actionValue = static_cast<int16_t>(bookmarkRowItems.size());
+    bookmarkRowItems.push_back(item);
+  }
+}
 
-      // render list with just the selected item for the user to confirm to delete
-      GUI.drawList(renderer, Rect{contentX, pageHeight / 2, contentWidth, LINE_HEIGHT}, 1, 0, getBookmarkTitle,
-                   getBookmarkSubtitle, getBookmarkIcon);
-    } else {
-      GUI.drawList(renderer, Rect{contentX, listY, contentWidth, listHeight}, numBookmarks, selectorIndex,
-                   getBookmarkTitle, getBookmarkSubtitle, getBookmarkIcon);
+void MangaBookmarksActivity::openSelectedBookmark() {
+  if (bookmarks.empty() || nav.selected < 0 || nav.selected >= static_cast<int>(bookmarks.size())) {
+    return;
+  }
+  const auto& bookmark = bookmarks.at(nav.selected);
+  setResult(PageResult{bookmark.computedChapterProgress});
+  finish();
+}
 
-      GUI.drawHelpText(renderer, Rect{contentX, pageHeight - hintGutterBottom, contentWidth, LINE_HEIGHT},
-                       tr(STR_HOLD_OPEN_TO_DELETE));
-    }
+void MangaBookmarksActivity::activateIndex(const int index) {
+  if (confirmPopup.isActive()) return;
+  if (index < 0 || index >= listCount()) return;
+  app.clearTapFlash();
+  nav.selected = index;
+  openSelectedBookmark();
+}
+
+void MangaBookmarksActivity::onRowLongPress(const int index) {
+  if (confirmPopup.isActive()) return;
+  if (index < 0 || index >= listCount()) return;
+  app.clearTapFlash();
+  nav.selected = index;
+  showDeleteConfirmation();
+}
+
+bool MangaBookmarksActivity::handleCustomInput() {
+  if (confirmPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return true;
+  if (confirmingDelete) {
+    confirmingDelete = false;
+    requestUpdate();
+    return true;
+  }
+  return false;
+}
+
+bool MangaBookmarksActivity::handleButtons() {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+    ActivityResult result;
+    result.isCancelled = true;
+    setResult(std::move(result));
+    finish();
+    return true;
   }
 
-  const auto backLabel = confirmingDelete >= DELETE_MODE_DISPLAY ? tr(STR_CANCEL) : tr(STR_BACK);
-  const auto confirmLabel =
-      bookmarks.size() > 0 ? (confirmingDelete >= DELETE_MODE_DISPLAY ? tr(STR_DELETE) : tr(STR_SELECT)) : "";
-  const auto labels = mappedInput.mapLabels(backLabel, confirmLabel, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    if (mappedInput.getHeldTime() > ENTER_DELETE_MODE_MS) {
+      showDeleteConfirmation();
+    } else {
+      openSelectedBookmark();
+    }
+    return true;
+  }
+
+  return false;
+}
+
+void MangaBookmarksActivity::showDeleteConfirmation() {
+  if (bookmarks.empty() || confirmPopup.isActive()) {
+    return;
+  }
+  confirmingDelete = true;
+  const char* options[] = {tr(STR_CANCEL), tr(STR_DELETE)};
+  confirmPopup.show(tr(STR_CONFIRM_DELETE_BOOKMARK), options, 2, 0, [this](int idx) {
+    confirmingDelete = false;
+    if (idx == 1) {
+      deleteSelectedBookmark();
+    }
+    requestUpdate();
+  });
+  requestUpdate();
+}
+
+void MangaBookmarksActivity::deleteSelectedBookmark() {
+  if (nav.selected < 0 || nav.selected >= static_cast<int>(bookmarks.size())) {
+    return;
+  }
+
+  bookmarks.erase(bookmarks.begin() + nav.selected);
+  rebuildBookmarkRowItems();
+  if (!BookmarkFile::save(bookPath, bookmarks)) {
+    LOG_ERR("MNG", "Failed to save bookmarks after delete");
+  }
+
+  if (nav.selected >= static_cast<int>(bookmarks.size()) && nav.selected > 0) {
+    nav.selected--;
+  }
+
+  if (bookmarks.empty()) {
+    ActivityResult result;
+    result.isCancelled = true;
+    setResult(std::move(result));
+    finish();
+    return;
+  }
+
+  nav.follow(listCount());
+  requestUpdate(true);
+}
+
+void MangaBookmarksActivity::buildScreen(UiScreen& screen) {
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
+  screen.setContentMarginFromScreen(fui::Insets{
+      static_cast<int16_t>(safe.y + metrics.topPadding + metrics.headerHeight),
+      static_cast<int16_t>(renderer.getScreenWidth() - (safe.x + safe.width)),
+      static_cast<int16_t>(renderer.getScreenHeight() - (safe.y + safe.height)), static_cast<int16_t>(safe.x)});
+  screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
+
+  if (bookmarks.empty()) {
+    screen.centeredText(tr(STR_NO_BOOKMARKS), screen.theme().bodyText);
+    return;
+  }
+
+  if (!mappedInput.hasTouch()) {
+    const int helpLineHeight = renderer.getLineHeight(SMALL_FONT_ID);
+    const fui::Rect band = screen.takeBottom(static_cast<int16_t>(helpLineHeight + metrics.verticalSpacing));
+    GUI.drawHelpText(renderer, Rect{band.x, band.y + metrics.verticalSpacing, band.width, helpLineHeight},
+                     tr(STR_HOLD_OPEN_TO_DELETE));
+  }
+
+  fui::ListProps props;
+  props.items = bookmarkRowItems.data();
+  props.count = static_cast<uint16_t>(bookmarkRowItems.size());
+  props.action = ACTION_ROW;
+  props.inputMask = fui::InputTouch | fui::InputLongPress;
+  syncListViewport(screen, props, /*hasSubtitle=*/true);
+  screen.list(props);
+}
+
+void MangaBookmarksActivity::render(RenderLock&&) {
+  renderer.clearScreen();
+  drawChrome();
+  renderUi();
+
+  if (confirmPopup.processRender(renderer, mappedInput)) return;
+
+  const auto confirmLabel = bookmarks.empty() ? "" : tr(STR_SELECT);
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();
