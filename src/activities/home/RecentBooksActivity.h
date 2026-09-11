@@ -12,15 +12,23 @@
 
 #include "RecentBooksStore.h"
 #include "activities/Activity.h"
+#include "components/UiAppHost.h"
+#include "components/themes/BaseTheme.h"
 #include "util/ButtonNavigator.h"
 
-class RecentBooksActivity final : public Activity {
+class RecentBooksActivity final : public Activity, private UiAppHost {
  private:
+  static constexpr freeink::ui::ActionId ACTION_TAB = 1;
+  static constexpr freeink::ui::ActionId ACTION_BOOK = 2;
+  static constexpr freeink::ui::ActionId ACTION_SHELF = 3;
+  static constexpr freeink::ui::ActionId ACTION_SHELF_BOOK = 4;
+
   ButtonNavigator buttonNavigator;
 
   int selectedTab = 0;
   int contentIndex = 0;
   int scrollRow = 0;
+  std::vector<TabInfo> touchTabs_;
 
   bool longPressFired = false;
 
@@ -82,6 +90,17 @@ class RecentBooksActivity final : public Activity {
   void renderBooksTab(int contentTop, int contentHeight);
   void renderShelvesTab(int contentTop, int contentHeight);
   void renderShelfBooksView(int contentTop, int contentHeight);
+  void drawGridScrollBar(int contentTop, int contentHeight, int totalRows, int visibleRows, int topRow);
+  void buildTouchTargets(UiScreen& screen);
+  bool routeLibraryTouch();
+  bool handleTouchTabTap();
+  bool handleTouchScroll();
+  void onTouchAction(const freeink::ui::ActionEvent& event);
+  void openShelf(int shelfIndex);
+  void openRecentBook(int bookIndex);
+  void openShelfBook(int bookIndex);
+  static void touchScreenTrampoline(UiScreen& screen, void* user);
+  static void touchActionTrampoline(const freeink::ui::ActionEvent& event, void* user);
 
   // Shared cell/row painters, used by both the full renders above and the partial fast path.
   void drawGridCell(int cellX, int cellY, int cellWidth, int cellHeight, const std::string& coverBmpPath,
@@ -223,7 +242,7 @@ class RecentBooksActivity final : public Activity {
 
  public:
   explicit RecentBooksActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : Activity("RecentBooks", renderer, mappedInput) {}
+      : Activity("RecentBooks", renderer, mappedInput), UiAppHost(renderer) {}
   void onEnter() override;
   void onExit() override;
   void loop() override;

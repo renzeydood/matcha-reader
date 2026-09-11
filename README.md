@@ -1,8 +1,8 @@
 # Matcha Reader, a Japanese learning fork of CrossPoint
 
-> **X4 Pro development:** integration with current CrossPoint is in progress on `feature/x4pro`. This branch is not yet a validated firmware build. See the [integration log](docs/x4pro-merge-resolution-log.md).
+> **X4 Pro development:** integration with current CrossPoint is in progress on `MATC-001-marge-crosspoint-1.6.0`. The first X4 Pro smoke test has passed; remaining touch follow-up and validation are tracked in the [integration log](docs/x4pro-merge-resolution-log.md).
 
-The experimental X4 Pro integration adds CrossPoint's touch reader toolbar while retaining Matcha's Japanese reading controls under **Reader Settings**. Build checks and on-device validation are tracked separately in the integration log.
+The experimental X4 Pro integration adds CrossPoint's touch reader toolbar while retaining Matcha's Japanese reading controls under **Reader Settings**. Build checks, smoke-test results and remaining touch work are tracked separately in the integration log.
 
 For experimental installation and testing, see the [device and emulator test guide](docs/x4pro-install-and-test.md). Both firmware targets compile; emulator compatibility and physical-device behavior remain unvalidated.
 
@@ -74,7 +74,9 @@ Convert with the [browser tool](https://eszter007.github.io/matcha-reader-tools/
 ### Library
 
 Every book on the card as a cover grid, at any depth. Covers and titles come from the book's own metadata on first
-visit, with progress as a badge. Manga sits beside EPUBs. A **Shelves** tab lists folders that contain books.
+visit, with progress as a badge. Manga sits beside EPUBs. A **Shelves** tab lists folders that contain books. On touch
+devices, tap a book to open it, long-press it for per-book stats, swipe the grid to scroll, and tap **Books** or
+**Shelves** to switch tabs. Shelf rows and shelf books can also be opened by touch.
 
 <p align="center"><img src="docs/images/screenshots/library.png" width="260" alt="Library grid with manga and EPUB covers side by side"></p>
 
@@ -82,7 +84,9 @@ visit, with progress as a badge. Manga sits beside EPUBs. A **Shelves** tab list
 
 Streak, minutes this week, books finished, total time, and a calendar of the days you read. Recorded as you go, every few minutes and again when you close a book, so a flat battery costs you minutes rather than the whole session.
 
-Press **Details** for the same numbers per language, one tab each. Long press a book in the Library for its own sessions, total time, average session and calendar.
+Press **Details**, or tap the overall stats page on touch devices, for the same numbers per language, one tab each.
+Long press a book in the Library for its own sessions, total time, average session and calendar. On touch devices,
+swipe vertically to scroll stats pages, swipe horizontally to change month, and tap a language tab to switch languages.
 
 <p align="center">
   <img src="docs/images/screenshots/insights.png" width="240" alt="Insights with streak, stat cards and calendar">
@@ -197,7 +201,10 @@ pio run              # build
 pio run -t upload    # flash
 ```
 
-Same PlatformIO setup as upstream. For desktop testing see the [emulator](https://github.com/eszter007/Crosspoint-Emulator-Matcha). Development notes are in [CLAUDE.md](CLAUDE.md), the on-card cache formats in [docs/file-formats.md](docs/file-formats.md).
+The X4 Pro build also writes `.pio/build/x4pro/matchareader-1.6.0-x4pro.bin` alongside PlatformIO's standard
+`firmware.bin`. Same PlatformIO setup as upstream. For desktop testing see the
+[emulator](https://github.com/eszter007/Crosspoint-Emulator-Matcha). Development notes are in [CLAUDE.md](CLAUDE.md),
+the on-card cache formats in [docs/file-formats.md](docs/file-formats.md).
 
 ## Compatibility with upstream
 

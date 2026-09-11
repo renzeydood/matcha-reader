@@ -67,6 +67,35 @@ void ReadingStatsActivity::loop() {
                            [](const ActivityResult&) {});
     return;
   }
+  int tx = 0;
+  int ty = 0;
+  if (mappedInput.wasScreenTapped(tx, ty)) {
+    startActivityForResult(std::make_unique<LanguageStatsActivity>(renderer, mappedInput),
+                           [](const ActivityResult&) {});
+    return;
+  }
+  const auto swipe = mappedInput.wasSwipe();
+  if (swipe == MappedInputManager::SwipeDir::Up) {
+    if (scrollOffset < maxScrollOffset) {
+      scrollOffset += 40;
+      if (scrollOffset > maxScrollOffset) scrollOffset = maxScrollOffset;
+      requestUpdate();
+    }
+    return;
+  }
+  if (swipe == MappedInputManager::SwipeDir::Down) {
+    if (scrollOffset > 0) {
+      scrollOffset -= 40;
+      if (scrollOffset < 0) scrollOffset = 0;
+      requestUpdate();
+    }
+    return;
+  }
+  if (swipe == MappedInputManager::SwipeDir::Left || swipe == MappedInputManager::SwipeDir::Right) {
+    StatsWidgets::stepMonth(calYear, calMonth, swipe == MappedInputManager::SwipeDir::Left ? +1 : -1);
+    requestUpdate();
+    return;
+  }
   // Left/Right to navigate calendar months
   if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
     StatsWidgets::stepMonth(calYear, calMonth, -1);

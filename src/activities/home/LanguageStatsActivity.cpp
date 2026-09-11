@@ -52,6 +52,7 @@ void LanguageStatsActivity::onEnter() {
   tabLabels.reserve(languages.size());
   std::transform(languages.begin(), languages.end(), std::back_inserter(tabLabels),
                  [](const ReadingStatsStore::LanguageSummary& l) { return makeTabLabel(l.code); });
+  touchTabs_.reserve(languages.size());
   const StatsWidgets::Today today = StatsWidgets::getToday();
   calYear = today.year;
   calMonth = today.month;
@@ -77,6 +78,32 @@ void LanguageStatsActivity::loop() {
     finish();
     return;
   }
+  int tx = 0;
+  int ty = 0;
+  if (!languages.empty() && mappedInput.wasScreenTapped(tx, ty)) {
+    const auto& metrics = UITheme::getInstance().getMetrics();
+    const Rect screen = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
+    const Rect tabRect{0, screen.y + metrics.topPadding + metrics.headerHeight, screen.width, metrics.tabBarHeight};
+    touchTabs_.clear();
+    for (int i = 0; i < static_cast<int>(languages.size()); i++) {
+      touchTabs_.push_back({tabLabels[i].c_str(), i == selectedTab});
+    }
+    int touchedTab = -1;
+    if (GUI.tabIndexFromPoint(renderer, tabRect, touchTabs_, tx, ty, touchedTab)) {
+      if (touchedTab != selectedTab) {
+        selectedTab = touchedTab;
+        scrollOffset = 0;
+        requestUpdate();
+      }
+      return;
+    }
+    finish();
+    return;
+  }
+  if (languages.empty() && mappedInput.wasScreenTapped(tx, ty)) {
+    finish();
+    return;
+  }
   // Confirm cycles languages; Left/Right stay on the month, as on the overall screen.
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) && languages.size() > 1) {
     selectedTab = (selectedTab + 1) % static_cast<int>(languages.size());
@@ -91,6 +118,26 @@ void LanguageStatsActivity::loop() {
   if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
     StatsWidgets::stepMonth(calYear, calMonth, +1);
     requestUpdate();
+  }
+  const auto swipe = mappedInput.wasSwipe();
+  if (swipe == MappedInputManager::SwipeDir::Up) {
+    if (scrollOffset < maxScrollOffset) {
+      scrollOffset = std::min(scrollOffset + 40, maxScrollOffset);
+      requestUpdate();
+    }
+    return;
+  }
+  if (swipe == MappedInputManager::SwipeDir::Down) {
+    if (scrollOffset > 0) {
+      scrollOffset = std::max(scrollOffset - 40, 0);
+      requestUpdate();
+    }
+    return;
+  }
+  if (swipe == MappedInputManager::SwipeDir::Left || swipe == MappedInputManager::SwipeDir::Right) {
+    StatsWidgets::stepMonth(calYear, calMonth, swipe == MappedInputManager::SwipeDir::Left ? +1 : -1);
+    requestUpdate();
+    return;
   }
   buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Down}, [this] {
     if (scrollOffset < maxScrollOffset) {

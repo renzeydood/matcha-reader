@@ -2,11 +2,33 @@
 
 ## Current checkpoint — 2026-09-11 (read this first)
 
-**Status: integration incomplete; edits saved; no firmware ready for flashing.**
+**Status: integration incomplete; X4 Pro flash smoke test passed; phase-1 touch polish build-validated.**
 This section supersedes older progress statements below, which are retained as history.
 This log is the durable resume point after usage-limit interruptions. The X4 Pro
 and original ESP32-C3 builds pass after boot hardening. No build is running. See the latest
 result and task table below before consulting historical failure notes.
+
+### Physical smoke test update - 2026-09-11
+
+The initial integrated firmware was flashed to the user's X4 Pro and completed a
+successful smoke test. Base CrossPoint features, including touch input, work on
+device. Matcha-added features also work through their existing button paths.
+
+Library and Reading Statistics touch support has now been implemented and
+source/build validated. First device feedback found Library tap-to-open and
+Stats scrolling working, but Library touch scroll behaved like cursor movement,
+Library tab taps missed the drawn tab labels, and overall Stats still required
+Confirm to reveal language tabs. Follow-up source fixes now make Library
+vertical swipes scroll the viewport with scrollbars, route Library tab taps
+through the theme tab hit helper, and open Language Stats on an overall-Stats
+tap. Remaining follow-up: device-test the refined touch paths, then add
+touch-first interaction to the remaining Matcha-added UI surfaces.
+
+Latest device feedback after the Library/Stats refinement: touch controls are
+working and feel more intuitive. Final phase-1 polish now build-validates: a
+non-tab tap on Language Stats returns to overall Stats, and the X4 Pro build
+produces a Matcha-named app binary (`matchareader-1.6.0-x4pro.bin`) alongside
+the standard PlatformIO output.
 
 ### Latest verified results - 2026-09-11
 
@@ -32,10 +54,12 @@ Original X4 application: 6,323,456 bytes. Source review and verification checkli
 are in [the boot review](x4pro-boot-review.md). README/setup guidance is updated.
 No flashing, commit, push or staging of the actual merge index occurred.
 
-**Next:** continue the outstanding reader behavior fixes and prepare physical
-boot/recovery verification. Installed bootloader rollback remains unverified.
-This completed hardening task does not mark the whole integration complete or
-clear the experimental firmware for flashing on the locked device.
+**Next:** device-test the new Library and Reading Statistics touch paths, then
+implement touch support for the remaining Matcha-added manga, lookup and
+translation surfaces. Continue the outstanding reader behavior fixes and prepare
+deeper boot/recovery verification. Installed bootloader rollback remains
+unverified. This completed hardening task and smoke test do not mark the whole
+integration complete.
 
 **Original pre-flash boot review (superseded by hardening above):** see [boot review](x4pro-boot-review.md).
 User confirms SD Firmware Update is accessible. No definite new boot crash was
@@ -125,9 +149,13 @@ No new host-test changes; the saved 225/225 result remains the latest host run.
 
 ### Task status board
 
-Last verified: 2026-09-11. Overall: **build milestone complete; reader-behavior review pending**.
-Both build processes have finished successfully. Resume from the behavior-review
-findings; rerun builds when subsequent source changes require validation.
+Last verified: 2026-09-11. Overall: **build milestone complete; X4 Pro smoke test passed; phase-1 touch polish build-validated**.
+Both build processes have finished successfully. The user's initial X4 Pro flash
+validated base CrossPoint behavior and button-driven Matcha features. The first
+Library/Stats touch pass was device-tested; follow-up fixes for viewport
+scrolling, tab tapping and touch entry to Language Stats now compile in the X4
+Pro firmware build. Final polish also build-validates: non-tab taps hide
+Language Stats again, and the X4 Pro build writes the named Matcha firmware copy.
 
 | Task | Status | Evidence / next action |
 | --- | --- | --- |
@@ -136,10 +164,17 @@ findings; rerun builds when subsequent source changes require validation.
 | Set up local compiler and host-test tools | Complete | Compile database and host build succeed |
 | Run current host test suite | Complete | 225/225 passed; host-tests-all.log |
 | Build X4 Pro firmware | Complete | SUCCESS, 86.19 s; build-x4pro.log; device validation pending |
+| Smoke-test X4 Pro firmware | Complete | User flashed the initial build; base CrossPoint features and button-driven Matcha features work |
+| Add touch support for Matcha-added Library | Feedback fixes source/build validated; device retest pending | Tap/long-press routing works on device; follow-up changes make swipes scroll the viewport with scrollbars and route Books/Shelves tab taps through the theme tab hit helper. X4 Pro build PASS, 85.65 s, `.cache/x4pro-audit/touch-library-stats-feedback-build-x4pro.log` |
+| Add touch support for Reading Statistics | Phase-1 polish source/build validated; device retest pending | Stats vertical scroll and tap-to-language-details work on device; final polish makes a non-tab tap on Language Stats return to overall Stats. X4 Pro build PASS, 98.73 s, `.cache/x4pro-audit/phase1-polish-build-x4pro.log` |
+| Add touch support for Manga lists | Pending | Convert manga chapter/bookmark lists toward `UiListActivity`; tap opens, long-press deletes bookmarks |
+| Add touch support for Manga reader | Pending | Add reader-style page/panel/menu touch controls without disturbing prefetch/grayscale paths |
+| Add touch support for lookup/translation panels | Pending | Add touch scrolling and entry navigation to word lookup and translation result screens |
 | Review merged reader and rendering behavior | Started; incomplete | Follow reader/cache checklist below |
 | Build original ESP32-C3 firmware | Complete | SUCCESS, 358.71 s; build-default.log |
+| Name X4 Pro firmware artifact | Complete | `.pio/build/x4pro/matchareader-1.6.0-x4pro.bin` produced by `pio run -e x4pro`; standard `firmware.bin` remains for upload/OTA flows |
 | Format and reconcile final documentation | Started | Formatter passed; README updated; user-guide and format audit pending |
-| Test on physical hardware | Not started | Requires device validation; no flashing performed |
+| Test on physical hardware | Started | Initial X4 Pro flash smoke test passed; first Library/Stats touch pass tested; refined Library/Stats touch paths need device retest |
 | Final integration review | Pending | Successful builds, relevant tests, documented device results/limits |
 
 Tracking convention: before starting a milestone, mark it Started; after working,
@@ -150,7 +185,7 @@ and the current checkpoint updated; older notes below are historical.
 
 ### Repository and agreed scope
 
-- Workspace: `E:/matcha-reader`; branch: `feature/x4pro`.
+- Workspace: `E:/matcha-reader`; branch: `MATC-001-marge-crosspoint-1.6.0`.
 - Full local CrossPoint merge into Matcha, preserving Japanese reading, ruby, manga,
   dictionary/translation, library and reading statistics while adding X4 Pro hardware support.
 - Matcha HEAD: `61ca61ba86e3c5709a24d1b9c4f3cf2d41488012`.
@@ -160,7 +195,8 @@ and the current checkpoint updated; older notes below are historical.
   working files have been edited; Git's unmerged-file count is not the marker count.
 - No conflict markers found in `src`, `lib`, `docs`, or `test` at this checkpoint.
   Marker removal does **not** mean semantic integration is finished.
-- No firmware flashed, no commit made, no push performed.
+- Initial X4 Pro flash smoke test succeeded after this checkpoint. No commit made
+  and no push performed.
 
 ### Completed edits and evidence
 
@@ -177,6 +213,9 @@ and the current checkpoint updated; older notes below are historical.
 - Shared reader menus, settings, text settings and file browser use upstream UI
   controls with Matcha options/filtering. Matcha's custom library and footnote
   screens are retained, with compatibility edits.
+- Library now registers FreeInkUI-backed touch hit targets over its custom grid,
+  shelf and tab render paths. Reading Statistics screens now support touch swipe
+  scrolling/month navigation and language-tab taps.
 - Sleep edits retain Matcha's legacy transparent-art directories alongside upstream
   overlay paths. README/user-guide reconciliation still needs a final review.
 - Individual X4 Pro compiler checks passed for CSS/parser/section/EPUB, TXT/XTC,
@@ -227,11 +266,49 @@ calling the integration complete:
 - Confirm toolbar More actions on image-only pages, allocation-failure paths,
   touch routes for custom manga/library screens, and grayscale/SD-memory lifecycle.
 
+### Matcha-added touch support plan
+
+Priority order agreed after the first successful X4 Pro flash:
+
+1. **Library touch support** (`RecentBooksActivity`) - feedback fixes source/build validated:
+   keep the custom Matcha
+   cover-grid/shelf renderer, but add FreeInkUI-backed hit routing instead of
+   new manual touch geometry. Touch should support Books-grid tap-to-open,
+   long-press-to-stats, Shelves-tab tap switching, shelf-row opening, and
+   shelf-detail book tap/long-press. Device feedback from the first pass showed
+   tap-to-open working; follow-up changes make vertical swipes scroll the grid
+   viewport instead of moving the selection cursor and add grid scrollbars.
+2. **Reading Statistics touch support** (`ReadingStatsActivity`,
+   `LanguageStatsActivity`, `BookStatsActivity`) - feedback fixes source/build validated: add vertical swipe scrolling,
+   horizontal month navigation, Details activation from overall stats, and
+   language-tab selection. Back swipe should continue to use the global Back
+   mapping.
+3. **Manga list touch support** (`MangaChapterSelectionActivity`,
+   `MangaBookmarksActivity`): convert toward `UiListActivity` where practical.
+   Tap should open, and bookmark long-press should use the same delete
+   confirmation model as EPUB bookmarks.
+4. **Manga reader touch support** (`MangaReaderActivity`): add reader-style
+   page/panel/menu touch controls while preserving panel prefetch, deferred
+   grayscale upgrades and existing button behavior.
+5. **Lookup and translation touch polish** (`EpubReaderWordLookupActivity`,
+   `MangaWordLookupActivity`, `EpubReaderTranslationActivity`): add touch
+   scrolling and entry navigation without changing dictionary scan/cache
+   semantics.
+
+Implementation rule: new touch surfaces should use the FreeInkUI routing stack
+from `UiAppHost`/`UiListActivity` where feasible. Do not add new legacy
+`rowTouch`, `colTouch` or raw rectangle hit tests except in the already-allowed
+Home/reader-page surfaces.
+
 ### Resume checklist (small milestones)
 
 1. **Build milestone COMPLETE:** X4 Pro and original ESP32-C3 compile/link and
    binary generation passed. Do not mark the merge complete just because it compiles.
-2. **Reader behavior milestone:** audit vertical and horizontal chapter navigation,
+2. **Touch follow-up milestone:** device-test Library and Reading Statistics
+   touch support, then add manga lists, manga reader, and lookup/translation
+   polish in that order. Preserve existing button behavior and avoid
+   steady-state heap allocations in render loops.
+3. **Reader behavior milestone:** audit vertical and horizontal chapter navigation,
    position preservation when opening/cancelling chapter selection, progress/sync
    jumps, settings return and orientation changes. Recent edits reset both layout
    engines but the chapter-selection path still needs careful position review.
@@ -239,15 +316,15 @@ calling the integration complete:
    attached to a horizontal render tail and may need its vertical counterpart.
    Check Japanese toolbar filtering, disabled text actions on image-only pages,
    footnote/link routes, auto-turn and end-of-book/statistics behavior.
-3. **Rendering/cache milestone:** audit merged ParsedText space-advance calls for
+4. **Rendering/cache milestone:** audit merged ParsedText space-advance calls for
    Matcha letter spacing and per-word fonts, and merged image decode/grayscale/
    polarity/cancellation paths. Confirm CSS partial/error outcomes never promote
    incomplete caches or persist transient failure. Add meaningful regressions for
    any discovered bugs; current parser tests cover only a narrow link case.
-4. **Validation milestone:** both builds and formatting passed at this checkpoint.
+5. **Validation milestone:** both builds and formatting passed at this checkpoint.
    After behavior fixes, rerun affected tests/builds and only `bin/clang-format-fix -g`
    for formatting. No raw clang-format invocation/probing.
-5. **Documentation/review milestone:** reconcile README/user guide with final menus,
+6. **Documentation/review milestone:** reconcile README/user guide with final menus,
    sleep overlay paths and experimental hardware support; review file-format docs
    against actual serialization. Update this log with exact results and remaining
    device checks. Leave flashing, committing and pushing to explicit user requests.

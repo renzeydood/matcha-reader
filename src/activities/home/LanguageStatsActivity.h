@@ -4,6 +4,7 @@
 
 #include "ReadingStatsStore.h"
 #include "activities/Activity.h"
+#include "components/themes/BaseTheme.h"
 #include "util/ButtonNavigator.h"
 
 // Insights split by language: one tab each, same cards as the overall screen.
@@ -15,6 +16,7 @@ class LanguageStatsActivity final : public Activity {
   // Owned strings, not a rotating buffer: render() collects every label into a TabInfo vector
   // (which holds const char*) before any is drawn, so all of them must stay alive at once.
   std::vector<std::string> tabLabels;
+  std::vector<TabInfo> touchTabs_;
   int selectedTab = 0;
   // Swallows the release ending a long Back press, so going home does not also finish().
   bool backLongPressFired = false;

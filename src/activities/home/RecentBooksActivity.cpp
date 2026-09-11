@@ -36,6 +36,8 @@ constexpr uint32_t THUMB_IDLE_MS = 2000;
 constexpr size_t INDEX_IO_CHUNK_SIZE = 4096;
 constexpr uint32_t COVER_WORKER_STACK = 8192;
 
+namespace fui = freeink::ui;
+
 bool readExactChunked(HalFile& file, void* output, const size_t length) {
   auto* bytes = static_cast<uint8_t*>(output);
   size_t offset = 0;
@@ -784,8 +786,165 @@ int RecentBooksActivity::readProgressPercent(const std::string& bookPath) const 
   return -1;
 }
 
+void RecentBooksActivity::touchScreenTrampoline(UiScreen& screen, void* user) {
+  static_cast<RecentBooksActivity*>(user)->buildTouchTargets(screen);
+}
+
+void RecentBooksActivity::touchActionTrampoline(const fui::ActionEvent& event, void* user) {
+  static_cast<RecentBooksActivity*>(user)->onTouchAction(event);
+}
+
+void RecentBooksActivity::onTouchAction(const fui::ActionEvent& event) {
+  switch (event.action) {
+    case ACTION_TAB:
+      if (event.value >= 0 && event.value < TAB_COUNT && selectedTab != event.value) {
+        selectedTab = event.value;
+        contentIndex = 0;
+        scrollRow = 0;
+        if (selectedTab == 1 && !shelvesLoaded) loadShelves();
+        requestUpdate();
+      }
+      break;
+    case ACTION_BOOK:
+      if (event.longPress) {
+        if (event.value >= 0 && event.value < static_cast<int>(recentBooks.size())) {
+          app.clearTapFlash();
+          showBookStats(recentBooks[event.value].path, recentBooks[event.value].title);
+        }
+      } else {
+        openRecentBook(event.value);
+      }
+      break;
+    case ACTION_SHELF:
+      openShelf(event.value);
+      break;
+    case ACTION_SHELF_BOOK:
+      if (event.longPress) {
+        if (event.value >= 0 && event.value < static_cast<int>(shelfBooks.size())) {
+          app.clearTapFlash();
+          showBookStats(shelfBooks[event.value].path, shelfBooks[event.value].title);
+        }
+      } else {
+        openShelfBook(event.value);
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+bool RecentBooksActivity::handleTouchTabTap() {
+  if (openShelfIndex >= 0 || !mappedInput.hasTouch()) return false;
+  int tx = 0;
+  int ty = 0;
+  if (!mappedInput.wasScreenTapped(tx, ty)) return false;
+
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const Rect tabRect{0, metrics.topPadding + metrics.headerHeight, renderer.getScreenWidth(), metrics.tabBarHeight};
+  touchTabs_.clear();
+  touchTabs_.push_back({tr(STR_TAB_BOOKS), selectedTab == 0});
+  touchTabs_.push_back({tr(STR_TAB_SHELVES), selectedTab == 1});
+
+  int touchedTab = -1;
+  if (!GUI.tabIndexFromPoint(renderer, tabRect, touchTabs_, tx, ty, touchedTab)) return false;
+  lastInputMs = millis();
+  coverWorkerCancelRequested_ = true;
+  if (touchedTab == selectedTab) return true;
+
+  selectedTab = touchedTab;
+  contentIndex = 0;
+  scrollRow = 0;
+  if (selectedTab == 1 && !shelvesLoaded) loadShelves();
+  requestUpdate();
+  return true;
+}
+
+bool RecentBooksActivity::handleTouchScroll() {
+  if (!mappedInput.hasTouch()) return false;
+  const auto swipe = mappedInput.wasSwipe();
+  if (swipe != MappedInputManager::SwipeDir::Up && swipe != MappedInputManager::SwipeDir::Down) return false;
+
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int pageHeight = renderer.getScreenHeight();
+  const int delta = swipe == MappedInputManager::SwipeDir::Up ? 1 : -1;
+  bool moved = false;
+
+  if (openShelfIndex >= 0) {
+    const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+    const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
+    const int gridWidth = renderer.getScreenWidth() - 2 * metrics.contentSidePadding;
+    const int cellWidth = gridWidth / GRID_COLS;
+    const int cellHeight = getCellHeight(cellWidth);
+    const int visibleRows = getVisibleRows(cellHeight, contentHeight);
+    const int totalRows = (static_cast<int>(shelfBooks.size()) + GRID_COLS - 1) / GRID_COLS;
+    const int next = std::clamp(shelfScrollRow + delta, 0, std::max(0, totalRows - visibleRows));
+    moved = next != shelfScrollRow;
+    shelfScrollRow = next;
+    shelfContentIndex = -1;
+  } else if (selectedTab == 0) {
+    const int tabBarY = metrics.topPadding + metrics.headerHeight;
+    const int contentTop = tabBarY + metrics.tabBarHeight + metrics.verticalSpacing;
+    const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
+    const int gridWidth = renderer.getScreenWidth() - 2 * metrics.contentSidePadding;
+    const int cellWidth = gridWidth / GRID_COLS;
+    const int cellHeight = getCellHeight(cellWidth);
+    const int visibleRows = getVisibleRows(cellHeight, contentHeight);
+    const int totalRows = (static_cast<int>(recentBooks.size()) + GRID_COLS - 1) / GRID_COLS;
+    const int next = std::clamp(scrollRow + delta, 0, std::max(0, totalRows - visibleRows));
+    moved = next != scrollRow;
+    scrollRow = next;
+    contentIndex = 0;
+  } else {
+    const int tabBarY = metrics.topPadding + metrics.headerHeight;
+    const int contentTop = tabBarY + metrics.tabBarHeight + metrics.verticalSpacing;
+    const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
+    const int rowHeight = metrics.listWithSubtitleRowHeight;
+    const int visibleItems = std::max(1, contentHeight / rowHeight);
+    const int next = std::clamp(scrollRow + delta, 0, std::max(0, static_cast<int>(shelves.size()) - visibleItems));
+    moved = next != scrollRow;
+    scrollRow = next;
+    contentIndex = 0;
+  }
+
+  lastInputMs = millis();
+  coverWorkerCancelRequested_ = true;
+  if (moved) requestUpdate();
+  return true;
+}
+
+void RecentBooksActivity::openShelf(const int shelfIndex) {
+  if (shelfIndex < 0 || shelfIndex >= static_cast<int>(shelves.size())) return;
+  LOG_DBG("RBA", "Opening shelf: %s", shelves[shelfIndex].folderPath.c_str());
+  openShelfIndex = shelfIndex;
+  shelfContentIndex = 0;
+  shelfScrollRow = 0;
+  loadShelfBooks(shelves[shelfIndex].folderPath);
+  requestUpdate();
+}
+
+void RecentBooksActivity::openRecentBook(const int bookIndex) {
+  if (bookIndex < 0 || bookIndex >= static_cast<int>(recentBooks.size())) return;
+  app.clearTapFlash();
+  LOG_DBG("RBA", "Selected recent book: %s", recentBooks[bookIndex].path.c_str());
+  onSelectBook(recentBooks[bookIndex].path);
+}
+
+void RecentBooksActivity::openShelfBook(const int bookIndex) {
+  if (bookIndex < 0 || bookIndex >= static_cast<int>(shelfBooks.size())) return;
+  app.clearTapFlash();
+  LOG_DBG("RBA", "Selected shelf book: %s", shelfBooks[bookIndex].path.c_str());
+  onSelectBook(shelfBooks[bookIndex].path);
+}
+
 void RecentBooksActivity::onEnter() {
   Activity::onEnter();
+  resetUi();
+  app.on(ACTION_TAB, &RecentBooksActivity::touchActionTrampoline, this);
+  app.on(ACTION_BOOK, &RecentBooksActivity::touchActionTrampoline, this);
+  app.on(ACTION_SHELF, &RecentBooksActivity::touchActionTrampoline, this);
+  app.on(ACTION_SHELF_BOOK, &RecentBooksActivity::touchActionTrampoline, this);
+  app.setScreen(&RecentBooksActivity::touchScreenTrampoline, this);
+  touchTabs_.reserve(TAB_COUNT);
   lastInputMs = millis();
 
   if (RECENT_BOOKS.pruneMissing()) {
@@ -827,6 +986,10 @@ void RecentBooksActivity::loop() {
     coverWorkerCancelRequested_ = true;
   }
 
+  if (handleTouchTabTap()) return;
+  if (handleTouchScroll()) return;
+  if (routeLibraryTouch()) return;
+
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   const int contentHeight =
@@ -860,8 +1023,7 @@ void RecentBooksActivity::loop() {
         return;
       }
       if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() < LONG_PRESS_MS) {
-        LOG_DBG("RBA", "Selected shelf book: %s", shelfBooks[shelfContentIndex].path.c_str());
-        onSelectBook(shelfBooks[shelfContentIndex].path);
+        openShelfBook(shelfContentIndex);
         return;
       }
     }
@@ -898,12 +1060,7 @@ void RecentBooksActivity::loop() {
         (void)itemIdx;
       } else {
         if (itemIdx < static_cast<int>(shelves.size())) {
-          LOG_DBG("RBA", "Opening shelf: %s", shelves[itemIdx].folderPath.c_str());
-          openShelfIndex = itemIdx;
-          shelfContentIndex = 0;
-          shelfScrollRow = 0;
-          loadShelfBooks(shelves[itemIdx].folderPath);
-          requestUpdate();
+          openShelf(itemIdx);
           return;
         }
       }
@@ -928,16 +1085,14 @@ void RecentBooksActivity::loop() {
       }
       // The latch above swallows a long press's release, so stats never also opens the book.
       if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() < LONG_PRESS_MS) {
-        LOG_DBG("RBA", "Selected recent book: %s", recentBooks[itemIdx].path.c_str());
-        onSelectBook(recentBooks[itemIdx].path);
+        openRecentBook(itemIdx);
         return;
       }
     }
   }
 
-  // Upstream's flat recents list (selectorIndex + handleListTouch) doesn't exist here: this
-  // screen is a tabbed cover GRID addressed by contentIndex/scrollRow. Swipes move one grid
-  // row; Back stays with the tab/shelf-aware handler below rather than always going home.
+  // Button-era touch swipes are handled above as viewport scrolls. Keep this
+  // legacy cursor step only as a fallback for any non-touch swipe source.
   const auto swipe = mappedInput.wasSwipe();
   if (swipe == MappedInputManager::SwipeDir::Up || swipe == MappedInputManager::SwipeDir::Down) {
     const int totalItems = getContentItemCount() + 1;
@@ -1152,9 +1307,12 @@ void RecentBooksActivity::renderBooksTab(int contentTop, int contentHeight) {
   const int totalRows = (bookCount + GRID_COLS - 1) / GRID_COLS;
   const int selectedItem = contentIndex - 1;
 
-  const int selectedRow = selectedItem >= 0 ? selectedItem / GRID_COLS : 0;
-  if (selectedRow < scrollRow) scrollRow = selectedRow;
-  if (selectedRow >= scrollRow + visibleRows) scrollRow = selectedRow - visibleRows + 1;
+  if (selectedItem >= 0) {
+    const int selectedRow = selectedItem / GRID_COLS;
+    if (selectedRow < scrollRow) scrollRow = selectedRow;
+    if (selectedRow >= scrollRow + visibleRows) scrollRow = selectedRow - visibleRows + 1;
+  }
+  scrollRow = std::clamp(scrollRow, 0, std::max(0, totalRows - visibleRows));
 
   // One extra row peeks behind the button bar as a "more below" hint (covers and badges show;
   // the hint bar overdraws the bottom). Its titles sit fully under the hints, so they are
@@ -1197,6 +1355,7 @@ void RecentBooksActivity::renderBooksTab(int contentTop, int contentHeight) {
   if (auto* fcm = renderer.getFontCacheManager()) {
     fcm->clearCache();
   }
+  drawGridScrollBar(contentTop, contentHeight, totalRows, visibleRows, scrollRow);
 }
 
 void RecentBooksActivity::drawShelfRow(const int shelfIdx, const int itemY, const bool selected) {
@@ -1275,10 +1434,11 @@ void RecentBooksActivity::renderShelvesTab(int contentTop, int contentHeight) {
   const int selectedItem = contentIndex - 1;
   const int shelfCount = static_cast<int>(shelves.size());
 
-  int scrollOffset = 0;
-  if (selectedItem >= visibleItems) {
-    scrollOffset = selectedItem - visibleItems + 1;
+  if (selectedItem >= 0) {
+    if (selectedItem < scrollRow) scrollRow = selectedItem;
+    if (selectedItem >= scrollRow + visibleItems) scrollRow = selectedItem - visibleItems + 1;
   }
+  scrollRow = std::clamp(scrollRow, 0, std::max(0, shelfCount - visibleItems));
 
   // Prewarm the font cache with all visible folder names before drawing. Folder names are drawn
   // unconditionally on every render (unlike cover-fallback titles below), so without this, non-Latin
@@ -1287,22 +1447,22 @@ void RecentBooksActivity::renderShelvesTab(int contentTop, int contentHeight) {
   if (renderer.getFontCacheManager()) {
     std::string prewarmBuf;
     prewarmBuf.reserve(256);
-    for (int i = scrollOffset; i < std::min(scrollOffset + visibleItems, shelfCount); i++) {
+    for (int i = scrollRow; i < std::min(scrollRow + visibleItems, shelfCount); i++) {
       prewarmBuf += shelves[i].folderName;
       prewarmBuf += ' ';
     }
     renderer.prewarmText(UI_10_FONT_ID, prewarmBuf.c_str(), 1 << EpdFontFamily::BOLD);
   }
 
-  for (int i = scrollOffset; i < std::min(scrollOffset + visibleItems, shelfCount); i++) {
-    const int itemY = contentTop + (i - scrollOffset) * rowHeight;
+  for (int i = scrollRow; i < std::min(scrollRow + visibleItems, shelfCount); i++) {
+    const int itemY = contentTop + (i - scrollRow) * rowHeight;
     drawShelfRow(i, itemY, i == selectedItem);
   }
 
   if (shelfCount > visibleItems) {
     const int barX = pageWidth - metrics.scrollBarRightOffset - metrics.scrollBarWidth;
     const int thumbBarH = std::max(10, contentHeight * visibleItems / shelfCount);
-    const int thumbBarY = contentTop + (contentHeight - thumbBarH) * scrollOffset / (shelfCount - visibleItems);
+    const int thumbBarY = contentTop + (contentHeight - thumbBarH) * scrollRow / (shelfCount - visibleItems);
     renderer.fillRect(barX, thumbBarY, metrics.scrollBarWidth, thumbBarH, true);
   }
 
@@ -1330,9 +1490,12 @@ void RecentBooksActivity::renderShelfBooksView(int contentTop, int contentHeight
   const int bookCount = static_cast<int>(shelfBooks.size());
   const int totalRows = (bookCount + GRID_COLS - 1) / GRID_COLS;
 
-  const int selectedRow = shelfContentIndex >= 0 ? shelfContentIndex / GRID_COLS : 0;
-  if (selectedRow < shelfScrollRow) shelfScrollRow = selectedRow;
-  if (selectedRow >= shelfScrollRow + visibleRows) shelfScrollRow = selectedRow - visibleRows + 1;
+  if (shelfContentIndex >= 0) {
+    const int selectedRow = shelfContentIndex / GRID_COLS;
+    if (selectedRow < shelfScrollRow) shelfScrollRow = selectedRow;
+    if (selectedRow >= shelfScrollRow + visibleRows) shelfScrollRow = selectedRow - visibleRows + 1;
+  }
+  shelfScrollRow = std::clamp(shelfScrollRow, 0, std::max(0, totalRows - visibleRows));
 
   // See renderBooksTab: one peek row, no titles on it, badges filled synchronously.
   const int renderRows = std::min(totalRows - shelfScrollRow, visibleRows + 1);
@@ -1368,6 +1531,97 @@ void RecentBooksActivity::renderShelfBooksView(int contentTop, int contentHeight
   if (auto* fcm = renderer.getFontCacheManager()) {
     fcm->clearCache();
   }
+  drawGridScrollBar(contentTop, contentHeight, totalRows, visibleRows, shelfScrollRow);
+}
+
+void RecentBooksActivity::drawGridScrollBar(const int contentTop, const int contentHeight, const int totalRows,
+                                            const int visibleRows, const int topRow) {
+  if (totalRows <= visibleRows) return;
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int barX = renderer.getScreenWidth() - metrics.scrollBarRightOffset - metrics.scrollBarWidth;
+  const int thumbBarH = std::max(10, contentHeight * visibleRows / totalRows);
+  const int thumbBarY = contentTop + (contentHeight - thumbBarH) * topRow / (totalRows - visibleRows);
+  renderer.fillRect(barX, thumbBarY, metrics.scrollBarWidth, thumbBarH, true);
+}
+
+void RecentBooksActivity::buildTouchTargets(UiScreen& screen) {
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+  const uint16_t bookMask = static_cast<uint16_t>(fui::InputTouch | fui::InputLongPress);
+
+  if (openShelfIndex >= 0 && openShelfIndex < static_cast<int>(shelves.size())) {
+    const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+    const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
+    const int gridWidth = pageWidth - 2 * metrics.contentSidePadding;
+    const int cellWidth = gridWidth / GRID_COLS;
+    const int cellHeight = getCellHeight(cellWidth);
+    const int rowStride = cellHeight + GRID_ROW_GAP;
+    const int visibleRows = getVisibleRows(cellHeight, contentHeight);
+    const int bookCount = static_cast<int>(shelfBooks.size());
+    const int totalRows = (bookCount + GRID_COLS - 1) / GRID_COLS;
+    const int renderRows = std::min(totalRows - shelfScrollRow, visibleRows + 1);
+    const int firstIdx = shelfScrollRow * GRID_COLS;
+    const int lastIdx = std::min(firstIdx + renderRows * GRID_COLS, bookCount) - 1;
+    for (int idx = firstIdx; idx <= lastIdx; idx++) {
+      const int local = idx - firstIdx;
+      const int col = local % GRID_COLS;
+      const int row = local / GRID_COLS;
+      screen.frame().hit(fui::Rect{static_cast<int16_t>(metrics.contentSidePadding + col * cellWidth),
+                                   static_cast<int16_t>(contentTop + row * rowStride), static_cast<int16_t>(cellWidth),
+                                   static_cast<int16_t>(cellHeight)},
+                         ACTION_SHELF_BOOK, static_cast<int16_t>(idx), bookMask);
+    }
+    return;
+  }
+
+  const int tabBarY = metrics.topPadding + metrics.headerHeight;
+  const int contentTop = tabBarY + metrics.tabBarHeight + metrics.verticalSpacing;
+  const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
+  if (selectedTab == 0) {
+    const int gridWidth = pageWidth - 2 * metrics.contentSidePadding;
+    const int cellWidth = gridWidth / GRID_COLS;
+    const int cellHeight = getCellHeight(cellWidth);
+    const int rowStride = cellHeight + GRID_ROW_GAP;
+    const int visibleRows = getVisibleRows(cellHeight, contentHeight);
+    const int bookCount = static_cast<int>(recentBooks.size());
+    const int totalRows = (bookCount + GRID_COLS - 1) / GRID_COLS;
+    const int renderRows = std::min(totalRows - scrollRow, visibleRows + 1);
+    const int firstIdx = scrollRow * GRID_COLS;
+    const int lastIdx = std::min(firstIdx + renderRows * GRID_COLS, bookCount) - 1;
+    for (int idx = firstIdx; idx <= lastIdx; idx++) {
+      const int local = idx - firstIdx;
+      const int col = local % GRID_COLS;
+      const int row = local / GRID_COLS;
+      screen.frame().hit(fui::Rect{static_cast<int16_t>(metrics.contentSidePadding + col * cellWidth),
+                                   static_cast<int16_t>(contentTop + row * rowStride), static_cast<int16_t>(cellWidth),
+                                   static_cast<int16_t>(cellHeight)},
+                         ACTION_BOOK, static_cast<int16_t>(idx), bookMask);
+    }
+    return;
+  }
+
+  const int rowHeight = metrics.listWithSubtitleRowHeight;
+  const int visibleItems = std::max(1, contentHeight / rowHeight);
+  const int shelfCount = static_cast<int>(shelves.size());
+  const int top = std::clamp(scrollRow, 0, std::max(0, shelfCount - visibleItems));
+  for (int i = top; i < std::min(top + visibleItems, shelfCount); i++) {
+    screen.frame().hit(fui::Rect{static_cast<int16_t>(metrics.contentSidePadding - 6),
+                                 static_cast<int16_t>(contentTop + (i - top) * rowHeight - 4),
+                                 static_cast<int16_t>(pageWidth - 2 * metrics.contentSidePadding + 12),
+                                 static_cast<int16_t>(rowHeight + 8)},
+                       ACTION_SHELF, static_cast<int16_t>(i), fui::InputTouch);
+  }
+}
+
+bool RecentBooksActivity::routeLibraryTouch() {
+  const auto route = routeTouch(mappedInput, /*withLongPress=*/true);
+  if (route.routed) {
+    lastInputMs = millis();
+    coverWorkerCancelRequested_ = true;
+    if (app.invalidated()) requestUpdate();
+  }
+  return static_cast<bool>(route);
 }
 
 bool RecentBooksActivity::tryPartialSelectionRedraw() {
@@ -1495,6 +1749,7 @@ void RecentBooksActivity::render(RenderLock&&) {
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
     lastRendered = {true, openShelfIndex, selectedTab, contentIndex, scrollRow, shelfContentIndex, shelfScrollRow};
+    renderUi();
     renderer.displayBuffer();
     return;
   }
@@ -1521,5 +1776,6 @@ void RecentBooksActivity::render(RenderLock&&) {
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   lastRendered = {true, openShelfIndex, selectedTab, contentIndex, scrollRow, shelfContentIndex, shelfScrollRow};
+  renderUi();
   renderer.displayBuffer();
 }
