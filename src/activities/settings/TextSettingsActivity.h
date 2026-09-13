@@ -93,6 +93,10 @@ class TextSettingsActivity final : public UiTabListActivity {
   }
   // Rebuilds fonts_ (families installed on the card can change while this screen is open).
   void rebuildFamilyList();
+  bool usesJapaneseCompanionFont() const;
+  int previewFontId() const;
+  const char* previewFamilyName() const;
+  const char* activePointSizeFamilyName() const;
 
   struct SizeEntry {
     std::string name;  // the point size, rendered for display ("14 pt")
@@ -109,6 +113,7 @@ class TextSettingsActivity final : public UiTabListActivity {
   bool japaneseBook_ = false;
   int currentFamilyIndex_ = 0;
   int currentSizeIndex_ = 0;
+  mutable std::string previewFamilyNameBuffer_;
 
   ThemeMetrics metrics_ = {};
   int afterHeader = 0;

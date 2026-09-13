@@ -1228,8 +1228,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
                                if (const auto* menu = std::get_if<MenuResult>(&result.data)) {
                                  applyVerticalFuriganaOverride(menu->verticalOverride, menu->furiganaOverride);
                                }
-                               sdFontSystem.ensureLoaded(renderer);
-                               sdFontSystem.setJpFallbackNeeded(renderer, isJapaneseBook() || useVerticalText());
+                               applyReaderTextSettings();
                                // Reading Orientation now only changes via this screen (removed from the reader's
                                // own quick menu, which used to apply it straight from the popup via
                                // applyOrientation(menu.orientation)): pick up a change the same way onEnter()
@@ -3569,7 +3568,7 @@ void EpubReaderActivity::renderVerticalPageBody(const VerticalPage& vpage, const
   marginLeft += SETTINGS.screenMargin;
   VerticalTextBlock block(vpage);
   if (useFurigana()) {
-    block.render(renderer, effectiveReaderFontId(), SETTINGS.getRubyFontId(), marginLeft, marginTop, true);
+    block.render(renderer, effectiveReaderFontId(), effectiveReaderFontId(), marginLeft, marginTop, true);
   } else {
     block.render(renderer, effectiveReaderFontId(), marginLeft, marginTop, true);
   }
@@ -3821,11 +3820,17 @@ std::string EpubReaderActivity::textRowName(int row) const {
 
 std::string EpubReaderActivity::textRowValue(int row) const {
   static constexpr StrId kFamily[] = {StrId::STR_NOTO_SERIF, StrId::STR_NOTO_SANS};
+  const bool usesJpCompanion = (isJapaneseBook() || useVerticalText()) && !sdFontSystem.selectedFontCovers(0x3042) &&
+                               !sdFontSystem.companionFamilyName().empty();
   switch (row) {
     case 0:
+      if (usesJpCompanion) return sdFontSystem.companionFamilyName();
       if (SETTINGS.sdFontFamilyName[0] != '\0') return SETTINGS.sdFontFamilyName;
       return I18N.get(kFamily[SETTINGS.fontFamily % CrossPointSettings::FONT_FAMILY_COUNT]);
     case 1:
+      if (usesJpCompanion && sdFontSystem.companionPointSize() != 0) {
+        return std::to_string(sdFontSystem.companionPointSize()) + " pt";
+      }
       return std::to_string(SETTINGS.fontPointSize) + " pt";
     case 2:
       return I18N.get(kSpacingIds[SETTINGS.lineSpacing % CrossPointSettings::LINE_COMPRESSION_COUNT]);
@@ -3850,14 +3855,61 @@ void EpubReaderActivity::applyTextSettingLive() {
 // selection applies immediately to the page under the sheet.
 void EpubReaderActivity::showTextRowPopup(const int row) {
   switch (row) {
+    case 0: {
+      std::vector<std::string> fontNames;
+      std::vector<std::pair<bool, uint8_t>> fontTargets;
+      fontNames.push_back(I18N.get(StrId::STR_NOTO_SERIF));
+      fontTargets.push_back({true, static_cast<uint8_t>(CrossPointSettings::NOTOSERIF)});
+      fontNames.push_back(I18N.get(StrId::STR_NOTO_SANS));
+      fontTargets.push_back({true, static_cast<uint8_t>(CrossPointSettings::NOTOSANS)});
+      const auto& families = sdFontSystem.registry().getFamilies();
+      for (size_t i = 0; i < families.size(); ++i) {
+        if (SdCardFontSystem::isBuiltinJpExtension(families[i].name)) continue;
+        fontNames.push_back(families[i].name);
+        fontTargets.push_back({false, static_cast<uint8_t>(i)});
+      }
+      int curIdx = 0;
+      if (SETTINGS.sdFontFamilyName[0] != '\0') {
+        for (size_t i = 2; i < fontNames.size(); ++i) {
+          if (fontNames[i] == SETTINGS.sdFontFamilyName) {
+            curIdx = static_cast<int>(i);
+            break;
+          }
+        }
+      } else {
+        curIdx = SETTINGS.fontFamily == CrossPointSettings::NOTOSERIF ? 0 : 1;
+      }
+      overlayPopup.show(StrId::STR_FONT, fontNames, curIdx, [this, fontTargets, families](int idx) {
+        if (idx < 0 || idx >= static_cast<int>(fontTargets.size())) return;
+        if (fontTargets[idx].first) {
+          SETTINGS.fontFamily = fontTargets[idx].second;
+          SETTINGS.sdFontFamilyName[0] = '\0';
+        } else {
+          const auto regIdx = fontTargets[idx].second;
+          if (regIdx < families.size()) {
+            strncpy(SETTINGS.sdFontFamilyName, families[regIdx].name.c_str(), sizeof(SETTINGS.sdFontFamilyName) - 1);
+            SETTINGS.sdFontFamilyName[sizeof(SETTINGS.sdFontFamilyName) - 1] = '\0';
+          }
+        }
+        applyTextSettingLive();
+      });
+      break;
+    }
     case 1: {
       // The point sizes the active family actually ships.
-      const auto sizes = readerFontPointSizes(&sdFontSystem.registry(), SETTINGS.sdFontFamilyName);
+      const bool usesJpCompanion = (isJapaneseBook() || useVerticalText()) &&
+                                   !sdFontSystem.selectedFontCovers(0x3042) &&
+                                   !sdFontSystem.companionFamilyName().empty();
+      const char* familyName = usesJpCompanion ? sdFontSystem.companionFamilyName().c_str() : SETTINGS.sdFontFamilyName;
+      const auto sizes = readerFontPointSizes(&sdFontSystem.registry(), familyName);
       if (sizes.empty()) return;
       std::vector<std::string> labels;
       labels.reserve(sizes.size());
       for (const uint8_t size : sizes) labels.push_back(std::to_string(size) + " pt");
-      const uint8_t cur = snapToNearestPointSize(sizes, SETTINGS.fontPointSize);
+      const uint8_t activePt = usesJpCompanion && sdFontSystem.companionPointSize() != 0
+                                   ? sdFontSystem.companionPointSize()
+                                   : SETTINGS.fontPointSize;
+      const uint8_t cur = snapToNearestPointSize(sizes, activePt);
       int curIdx = 0;
       for (size_t i = 0; i < sizes.size(); ++i) {
         if (sizes[i] == cur) curIdx = static_cast<int>(i);

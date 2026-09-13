@@ -389,6 +389,10 @@ int SdCardFontSystem::companionFontId() const {
   return fallback.empty() ? 0 : fallbackManager_.getFontId(fallback);
 }
 
+const std::string& SdCardFontSystem::companionFamilyName() const { return fallbackManager_.currentFamilyName(); }
+
+uint8_t SdCardFontSystem::companionPointSize() const { return fallbackManager_.currentPointSize(); }
+
 bool SdCardFontSystem::selectedFontCovers(const uint32_t cp) const {
   const std::string& selected = manager_.currentFamilyName();
   if (selected.empty()) {

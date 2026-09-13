@@ -2,7 +2,7 @@
 
 ## Current checkpoint — 2026-09-11 (read this first)
 
-**Status: integration incomplete; X4 Pro flash smoke test passed; phase-1 touch polish build-validated.**
+**Status: integration incomplete; X4 Pro flash smoke test passed; manga touch build/device validated; Japanese font-size fix in progress.**
 This section supersedes older progress statements below, which are retained as history.
 This log is the durable resume point after usage-limit interruptions. The X4 Pro
 and original ESP32-C3 builds pass after boot hardening. No build is running. See the latest
@@ -29,6 +29,13 @@ working and feel more intuitive. Final phase-1 polish now build-validates: a
 non-tab tap on Language Stats returns to overall Stats, and the X4 Pro build
 produces a Matcha-named app binary (`matchareader-1.6.0-x4pro.bin`) alongside
 the standard PlatformIO output.
+
+Manga list touch support and manga reader page/menu touch support were added
+next. The user device-tested the manga lists successfully and quick-tested the
+manga reader touch path successfully. Work is currently paused from the touch
+roadmap to fix a Japanese EPUB text-settings bug: the reader renders Japanese
+through the effective companion font, but the font-size/settings surfaces were
+still using the raw selected Latin family context in parts of the UI.
 
 ### Latest verified results - 2026-09-11
 
@@ -149,13 +156,22 @@ No new host-test changes; the saved 225/225 result remains the latest host run.
 
 ### Task status board
 
-Last verified: 2026-09-11. Overall: **build milestone complete; X4 Pro smoke test passed; phase-1 touch polish build-validated**.
+Last verified: 2026-09-12. Overall: **build milestone complete; X4 Pro smoke test passed; manga touch device-validated; Japanese font-size fix in progress**.
 Both build processes have finished successfully. The user's initial X4 Pro flash
 validated base CrossPoint behavior and button-driven Matcha features. The first
 Library/Stats touch pass was device-tested; follow-up fixes for viewport
 scrolling, tab tapping and touch entry to Language Stats now compile in the X4
 Pro firmware build. Final polish also build-validates: non-tab taps hide
 Language Stats again, and the X4 Pro build writes the named Matcha firmware copy.
+Phase 2 has started with manga chapter/bookmark lists converted to the shared
+FreeInkUI list base. The X4 Pro build passed, and the user device-tested this
+slice successfully: manga chapter/bookmark touch features are working.
+Manga reader touch controls now source/build validate: page/panel turns and
+menu gestures are routed through the same reader touch helpers as EPUB,
+preserving existing button behavior and prefetch/grayscale lifecycles.
+The current active bugfix makes Japanese Text Settings use the same effective
+companion font context as EPUB rendering, and ensures returning from Reader
+Settings invalidates/rebuilds the active text layout.
 
 | Task | Status | Evidence / next action |
 | --- | --- | --- |
@@ -167,14 +183,15 @@ Language Stats again, and the X4 Pro build writes the named Matcha firmware copy
 | Smoke-test X4 Pro firmware | Complete | User flashed the initial build; base CrossPoint features and button-driven Matcha features work |
 | Add touch support for Matcha-added Library | Feedback fixes source/build validated; device retest pending | Tap/long-press routing works on device; follow-up changes make swipes scroll the viewport with scrollbars and route Books/Shelves tab taps through the theme tab hit helper. X4 Pro build PASS, 85.65 s, `.cache/x4pro-audit/touch-library-stats-feedback-build-x4pro.log` |
 | Add touch support for Reading Statistics | Phase-1 polish source/build validated; device retest pending | Stats vertical scroll and tap-to-language-details work on device; final polish makes a non-tab tap on Language Stats return to overall Stats. X4 Pro build PASS, 98.73 s, `.cache/x4pro-audit/phase1-polish-build-x4pro.log` |
-| Add touch support for Manga lists | Pending | Convert manga chapter/bookmark lists toward `UiListActivity`; tap opens, long-press deletes bookmarks |
-| Add touch support for Manga reader | Pending | Add reader-style page/panel/menu touch controls without disturbing prefetch/grayscale paths |
+| Add touch support for Manga lists | Device validated | `MangaChapterSelectionActivity` and `MangaBookmarksActivity` converted toward `UiListActivity`; tap opens, swipes scroll, bookmark long-press uses a tap-operable delete popup. X4 Pro build PASS, 101.55 s, `.cache/x4pro-audit/phase2-manga-lists-build-x4pro.log`; user device test passed |
+| Add touch support for Manga reader | Source/build validated; device test pending | Route configured reader tap/swipe page turns and center/menu gestures through `MangaReaderActivity` without disturbing panel prefetch, deferred grayscale upgrades or existing button behavior. X4 Pro build PASS, 84.84 s, `.cache/x4pro-audit/phase2-manga-reader-build-x4pro.log` |
+| Fix Japanese EPUB font-size editing | In progress | Text Settings and the reader Text panel now consult the loaded Japanese companion font when the selected reader font lacks CJK coverage; returning from Reader Settings now calls the same text-setting relayout path as the direct Text Settings action. Build validation pending. |
 | Add touch support for lookup/translation panels | Pending | Add touch scrolling and entry navigation to word lookup and translation result screens |
 | Review merged reader and rendering behavior | Started; incomplete | Follow reader/cache checklist below |
 | Build original ESP32-C3 firmware | Complete | SUCCESS, 358.71 s; build-default.log |
 | Name X4 Pro firmware artifact | Complete | `.pio/build/x4pro/matchareader-1.6.0-x4pro.bin` produced by `pio run -e x4pro`; standard `firmware.bin` remains for upload/OTA flows |
 | Format and reconcile final documentation | Started | Formatter passed; README updated; user-guide and format audit pending |
-| Test on physical hardware | Started | Initial X4 Pro flash smoke test passed; first Library/Stats touch pass tested; refined Library/Stats touch paths need device retest |
+| Test on physical hardware | Started | Initial X4 Pro flash smoke test passed; Library/Stats touch tested; manga list touch tested and working |
 | Final integration review | Pending | Successful builds, relevant tests, documented device results/limits |
 
 Tracking convention: before starting a milestone, mark it Started; after working,
@@ -283,13 +300,14 @@ Priority order agreed after the first successful X4 Pro flash:
    horizontal month navigation, Details activation from overall stats, and
    language-tab selection. Back swipe should continue to use the global Back
    mapping.
-3. **Manga list touch support** (`MangaChapterSelectionActivity`,
-   `MangaBookmarksActivity`): convert toward `UiListActivity` where practical.
-   Tap should open, and bookmark long-press should use the same delete
+ 3. **Manga list touch support** (`MangaChapterSelectionActivity`,
+    `MangaBookmarksActivity`) - device validated: convert toward `UiListActivity` where
+   practical. Tap should open, swipes should scroll the viewport without moving
+   the selected cursor, and bookmark long-press should use the same delete
    confirmation model as EPUB bookmarks.
-4. **Manga reader touch support** (`MangaReaderActivity`): add reader-style
-   page/panel/menu touch controls while preserving panel prefetch, deferred
-   grayscale upgrades and existing button behavior.
+4. **Manga reader touch support** (`MangaReaderActivity`) - source/build validated: add
+   reader-style page/panel/menu touch controls while preserving panel prefetch,
+   deferred grayscale upgrades and existing button behavior.
 5. **Lookup and translation touch polish** (`EpubReaderWordLookupActivity`,
    `MangaWordLookupActivity`, `EpubReaderTranslationActivity`): add touch
    scrolling and entry navigation without changing dictionary scan/cache
@@ -427,3 +445,12 @@ Moved shared `C:/Users/Renzey/.platformio/tools` to `E:/matcha-reader/.cache/pio
 Portable LLVM-MinGW and CMake were installed under ignored `.cache/host-tools` and `.cache/host-python`. Host test build files live in `.cache/host-build`. Evidence: `.cache/x4pro-audit/css-tests.log`, `css-build.log`, `compiledb.log`.
 
 The CSS and ParsedText resolution scripts are one-shot transforms; do not rerun them on edited files. CSS pre-edit backups are in `.cache/x4pro-audit/css-before.{h,cpp}`. Reader, HTML parser and UI conflicts remain open; no firmware has been flashed, committed or pushed.
+
+## Japanese Ebook Font Size & Overlay Picker Fix
+
+- Added missing `case 0:` (Font Family) to `showTextRowPopup(const int row)` in `EpubReaderActivity.cpp` so clicking "Font" in the Text toolbar panel opens the Font Family selection popup.
+- Resolved Japanese font sizing behavior across `SdCardFontSystem`, `TextSettingsActivity`, `TextSettingsPreview`, and `EpubReaderActivity`.
+- Documented flash constraints: Built-in CJK glyphs in flash (`notosansjp_joyo_12_regular`) only exist at 12pt due to ESP32-C3 flash limits. For multi-size (12, 14, 16, 18pt) Japanese text rendering, an SD Japanese font (`NotoSansJP.cpfont` or `NotoSerifJP.cpfont`) is loaded automatically by `SdCardFontSystem` from `/.fonts/` or `/fonts/` on the SD card.
+- Updated `CrossPointSettings::getRubyFontId()` and `EpubReaderActivity::renderVerticalPageBody()` so Furigana font size in vertical text mode scales dynamically with the active reader font point size (`effectiveReaderFontId()`).
+
+

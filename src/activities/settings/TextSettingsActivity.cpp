@@ -65,9 +65,35 @@ TextSettingsActivity::TextSettingsActivity(GfxRenderer& renderer, MappedInputMan
       japaneseBook_(japaneseBook) {}
 const char* TextSettingsActivity::tabLabel(const int index) const { return I18N.get(TAB_NAME_IDS[index]); }
 
+bool TextSettingsActivity::usesJapaneseCompanionFont() const {
+  return japaneseBook_ && !sdFontSystem.selectedFontCovers(0x3042) && sdFontSystem.companionFontId() != 0;
+}
+
+int TextSettingsActivity::previewFontId() const {
+  if (usesJapaneseCompanionFont()) return sdFontSystem.companionFontId();
+  return SETTINGS.getReaderFontId();
+}
+
+const char* TextSettingsActivity::previewFamilyName() const {
+  if (usesJapaneseCompanionFont()) {
+    previewFamilyNameBuffer_ = sdFontSystem.companionFamilyName();
+    return previewFamilyNameBuffer_.c_str();
+  }
+  return (currentFamilyIndex_ >= 0 && currentFamilyIndex_ < static_cast<int>(fonts_.size()))
+             ? fonts_[currentFamilyIndex_].name.c_str()
+             : "";
+}
+
+const char* TextSettingsActivity::activePointSizeFamilyName() const {
+  if (usesJapaneseCompanionFont()) return sdFontSystem.companionFamilyName().c_str();
+  return SETTINGS.sdFontFamilyName;
+}
+
 void TextSettingsActivity::onEnter() {
   if (static_cast<int>(tab_) >= tabCount()) tab_ = Tab::Layout;
   UiTabListActivity::onEnter();
+  sdFontSystem.ensureLoaded(renderer);
+  if (japaneseBook_) sdFontSystem.setJpFallbackNeeded(renderer, true);
 
   metrics_ = UITheme::getInstance().getMetrics();
   afterHeader = metrics_.topPadding + metrics_.headerHeight + metrics_.verticalSpacing;
@@ -150,12 +176,15 @@ void TextSettingsActivity::rebuildRowItems() {
 // which snaps SETTINGS.fontPointSize into the new family's set — but entry does
 // not, so the highlight is resolved by snapping rather than by exact match.
 void TextSettingsActivity::rebuildSizeList() {
-  const std::vector<uint8_t> points = readerFontPointSizes(registry_, SETTINGS.sdFontFamilyName);
+  const std::vector<uint8_t> points = readerFontPointSizes(registry_, activePointSizeFamilyName());
 
   // The stored size can still sit outside this family's set — e.g. the family
   // was deleted while selected, or the card was swapped. Highlight the size the
   // reader actually renders, which getReaderFontId() resolves the same way.
-  const uint8_t selectedPt = snapToNearestPointSize(points, SETTINGS.fontPointSize);
+  const uint8_t activePt = usesJapaneseCompanionFont() && sdFontSystem.companionPointSize() != 0
+                               ? sdFontSystem.companionPointSize()
+                               : SETTINGS.fontPointSize;
+  const uint8_t selectedPt = snapToNearestPointSize(points, activePt);
 
   sizes_.clear();
   sizes_.reserve(points.size());
@@ -293,14 +322,12 @@ void TextSettingsActivity::render(RenderLock&&) {
 
   GUI.drawHeader(renderer, Rect{0, metrics_.topPadding, pageWidth, metrics_.headerHeight}, tr(STR_TEXT_SETTINGS));
 
-  const char* familyName = (currentFamilyIndex_ >= 0 && currentFamilyIndex_ < static_cast<int>(fonts_.size()))
-                               ? fonts_[currentFamilyIndex_].name.c_str()
-                               : "";
+  const char* familyName = previewFamilyName();
   const char* sizeName = (currentSizeIndex_ >= 0 && currentSizeIndex_ < static_cast<int>(sizes_.size()))
                              ? sizes_[currentSizeIndex_].name.c_str()
                              : "";
   textsettings::renderPreview(renderer, previewLayout_, metrics_.previewPadding, metrics_.verticalSpacing, afterHeader,
-                              previewHeight, familyName, sizeName);
+                              previewHeight, previewFontId(), familyName, sizeName);
 
   // Tab bar + active tab's list draw inside the screen builder.
   renderUi();
@@ -329,6 +356,7 @@ void TextSettingsActivity::applyFamily(int listIndex) {
     SETTINGS.fontFamily = font.settingIndex;
     SETTINGS.sdFontFamilyName[0] = '\0';
     sdFontSystem.ensureLoaded(renderer);  // unloads the previously resident SD font
+    if (japaneseBook_) sdFontSystem.setJpFallbackNeeded(renderer, true);
     currentFamilyIndex_ = listIndex;
   } else if (registry_) {
     const int sdIdx = font.settingIndex - CrossPointSettings::BUILTIN_FONT_COUNT;
@@ -337,6 +365,7 @@ void TextSettingsActivity::applyFamily(int listIndex) {
       strncpy(SETTINGS.sdFontFamilyName, families[sdIdx].name.c_str(), sizeof(SETTINGS.sdFontFamilyName) - 1);
       SETTINGS.sdFontFamilyName[sizeof(SETTINGS.sdFontFamilyName) - 1] = '\0';
       sdFontSystem.ensureLoaded(renderer);
+      if (japaneseBook_) sdFontSystem.setJpFallbackNeeded(renderer, true);
       currentFamilyIndex_ = listIndex;
     }
   }
@@ -392,9 +421,11 @@ void TextSettingsActivity::activateRow(int row) {
 void TextSettingsActivity::applySize(int listIndex) {
   RenderLock lock;
 
-  currentSizeIndex_ = listIndex;
   SETTINGS.fontPointSize = sizes_[listIndex].pointSize;
   sdFontSystem.ensureLoaded(renderer);
+  if (japaneseBook_) sdFontSystem.setJpFallbackNeeded(renderer, true);
+  rebuildSizeList();
+  tabNavs[static_cast<int>(Tab::Size)].selected = currentSizeIndex_ + 1;
 }
 
 void TextSettingsActivity::confirmLayoutRow(int row) {

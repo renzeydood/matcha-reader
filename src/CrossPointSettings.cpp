@@ -405,17 +405,9 @@ int CrossPointSettings::getReaderFontId() const {
 
 int CrossPointSettings::getRubyFontId() const {
   if (sdFontFamilyName[0] != '\0' && sdFontIdResolver) {
-    // 12pt: the same size as the built-in fallback below, so an SD family and a built-in
-    // family put furigana at the same physical size. (Was the legacy SMALL size enum.)
-    int id = sdFontIdResolver(sdFontResolverCtx, sdFontFamilyName, 12);
+    int id = sdFontIdResolver(sdFontResolverCtx, sdFontFamilyName, fontPointSize);
     if (id != 0) return id;
   }
 
-  switch (fontFamily) {
-    case NOTOSANS:
-      return NOTOSANS_12_FONT_ID;
-    case NOTOSERIF:
-    default:
-      return NOTOSERIF_12_FONT_ID;
-  }
+  return getReaderFontId();
 }

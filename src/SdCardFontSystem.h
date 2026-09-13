@@ -44,6 +44,8 @@ class SdCardFontSystem {
   /// script, the companion becomes the reader font for that book so all layout and vertical
   /// positioning derives from a font that actually contains the glyphs.
   int companionFontId() const;
+  const std::string& companionFamilyName() const;
+  uint8_t companionPointSize() const;
 
   /// True when the currently selected reader font covers the codepoint. Built-in fonts are
   /// treated as Latin-complete and CJK-less (their CJK subset is a degraded fallback, not
