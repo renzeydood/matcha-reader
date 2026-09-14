@@ -1149,7 +1149,8 @@ std::vector<size_t> ParsedText::computeHyphenatedLineBreaks(const GfxRenderer& r
         spacing = 0;
       } else if (!isFirstWord) {
         spacing = renderer.getSpaceAdvance(fontId, lastCodepoint(words[currentIndex - 1]),
-                                           firstCodepoint(words[currentIndex]), wordStyles[currentIndex - 1]);
+                                           firstCodepoint(words[currentIndex]), wordStyles[currentIndex - 1],
+                                           blockStyle.letterSpacing);
       }
       const int candidateWidth = spacing + wordWidths[currentIndex];
 
@@ -1385,8 +1386,9 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
       totalNaturalGaps += renderer.getKerning(fontId, lastCodepoint(lineWords[wordIdx - 1]),
                                               firstCodepoint(lineWords[wordIdx]), lineWordStyles[wordIdx - 1]);
     } else if (!noSpaceBeforeVec[boundaryIdx]) {
-      totalNaturalGaps += renderer.getSpaceAdvance(fontId, lastCodepoint(lineWords[wordIdx - 1]),
-                                                   firstCodepoint(lineWords[wordIdx]), lineWordStyles[wordIdx - 1]);
+      totalNaturalGaps +=
+          renderer.getSpaceAdvance(fontId, lastCodepoint(lineWords[wordIdx - 1]), firstCodepoint(lineWords[wordIdx]),
+                                   lineWordStyles[wordIdx - 1], blockStyle.letterSpacing);
     }
   }
 

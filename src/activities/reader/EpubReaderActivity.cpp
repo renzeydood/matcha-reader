@@ -1146,14 +1146,20 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       if (sync.hasVisibleTextOffset && sync.spineIndex >= 0 && sync.spineIndex < epub->getSpineItemsCount()) {
         RenderLock lock;
         clearDeferredReposition();
-        if (section && currentSpineIndex == sync.spineIndex) {
+        if (verticalSection && currentSpineIndex == sync.spineIndex) {
+          const auto page = verticalSection->getPageForVisibleTextOffset(sync.visibleTextOffset);
+          verticalSection->currentPage = page.value_or(std::max(0, sync.page));
+        } else if (section && currentSpineIndex == sync.spineIndex) {
           const auto page = section->getPageForVisibleTextOffset(sync.visibleTextOffset);
           section->currentPage = page.value_or(std::max(0, sync.page));
         } else {
           currentSpineIndex = sync.spineIndex;
           pendingOffsetJump = sync.visibleTextOffset;
           nextPageNumber = std::max(0, sync.page);
+          // Both layout engines must be dropped: whichever one is active rebuilds for the new
+          // spine and consumes pendingOffsetJump.
           section.reset();
+          verticalSection.reset();
         }
         requestUpdate();
         return;
@@ -1965,13 +1971,22 @@ void EpubReaderActivity::renderBook() {
       // character and is immune to re-pagination; the fraction is a guess that lands the reader
       // up to a page away and drifts a little further on every switch.
       bool resolvedByOffset = false;
-      if (currentSpineIndex == cachedSpineIndex && cachedVisibleTextOffset.has_value() && !hadExplicitPageJump &&
-          !pendingPercentJump) {
+      if (pendingOffsetJump.has_value()) {
+        // An explicit offset jump (progress change, KOSync) stays valid across spines, unlike
+        // cachedVisibleTextOffset which only describes cachedSpineIndex.
+        if (const auto page = verticalSection->getPageForVisibleTextOffset(*pendingOffsetJump)) {
+          verticalSection->currentPage = *page;
+          resolvedByOffset = true;
+        }
+        clearDeferredReposition();
+      } else if (currentSpineIndex == cachedSpineIndex && cachedVisibleTextOffset.has_value() && !hadExplicitPageJump &&
+                 !pendingPercentJump) {
         if (const auto page = verticalSection->getPageForVisibleTextOffset(*cachedVisibleTextOffset)) {
           verticalSection->currentPage = *page;
           resolvedByOffset = true;
         }
       }
+      pendingOffsetJump.reset();
       cachedVisibleTextOffset.reset();
       if (cachedChapterTotalPageCount > 0) {
         if (!resolvedByOffset && currentSpineIndex == cachedSpineIndex &&
@@ -2267,6 +2282,11 @@ void EpubReaderActivity::renderBook() {
     partialRebuildStartFailed = false;
 
     const bool cacheLoaded = section->loadSectionFile(renderSpec);
+    // Captured before the reset below: a cache hit does not make the anchor stale. The offset
+    // names an exact character and is what preserves the position across a layout-mode switch;
+    // reading cachedVisibleTextOffset after the reset would always see nullopt and silently
+    // fall back to a page number numbered in the other layout.
+    const std::optional<uint32_t> carriedOffset = cachedVisibleTextOffset;
     if (cacheLoaded) {
       cachedChapterTotalPageCount = 0;
       cachedVisibleTextOffset.reset();
@@ -2277,7 +2297,7 @@ void EpubReaderActivity::renderBook() {
         explicitOffsetJump ? pendingOffsetJump
         : (pendingPageJump.has_value() || !pendingAnchor.empty() || currentSpineIndex != cachedSpineIndex)
             ? std::nullopt
-            : cachedVisibleTextOffset;
+            : carriedOffset;
     if (!cacheComplete) {
       if (section->isPartial()) {
         LOG_DBG("ERS", "Partial cache found (%d pages), resuming build...", section->pageCount);

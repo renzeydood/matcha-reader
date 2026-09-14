@@ -2,12 +2,13 @@
 
 ## Current checkpoint — 2026-09-14 (read this first)
 
-**Status: integration functionally complete and device-validated; deferred behavior findings remain open.**
+**Status: integration functionally complete and device-validated; behavior-review findings resolved, device confirmation pending.**
 Japanese font sizing, furigana scaling and the word-lookup/translation touch work are
 device-verified by the user. Both firmware targets build and the host suite is green
-(see the Phase 5 validation checkpoint below). What is **not** done: the five
-behavior-review findings listed under "Specific behavior-review findings still open",
-which the user explicitly chose to defer.
+(see the Phase 5 validation checkpoint below). The five behavior-review findings have
+been re-verified: three were real and are fixed, two were not defects (see that
+section). The three fixes are position-related and are **not covered by the host
+suite** — they need the device checks listed there.
 This section supersedes older progress statements below, which are retained as history.
 This log is the durable resume point after usage-limit interruptions. No build is running.
 See the latest result and task table below before consulting historical failure notes.
@@ -326,28 +327,54 @@ provides the existing manga API. Do not reintroduce that header.
 The X4 Pro build now passes (see latest result above). Original ESP32-C3 `default`
 validation also passed. No hardware behavior has been validated.
 
-### Specific behavior-review findings still open
+### Specific behavior-review findings — resolved 2026-09-14
 
-These are not covered by the passing build/host suite and must be addressed before
-calling the integration complete:
+All five entries were re-verified against current source rather than carried forward
+on the log's word. Two did not survive inspection; three were real and are now fixed.
 
-- `EpubReaderActivity::onReaderMenuConfirm`'s visible-offset sync branch maps only
-  a horizontal section and otherwise sets `pendingOffsetJump`, without resetting
-  the vertical section. The vertical builder reads `cachedVisibleTextOffset`
-  instead. Reconcile the two paths and validate same-/cross-spine vertical jumps.
-- Horizontal section-cache loading clears `cachedVisibleTextOffset` before
-  choosing the deferred offset. Check position preservation when toggling back
-  to an already-cached layout; do not assume a successful cache read makes the
-  old page number valid across layout modes.
-- Two `ParsedText::getSpaceAdvance` calls (greedy breaking and natural-gap total)
-  still omit `blockStyle.letterSpacing` while the surrounding render paths pass
-  it. Reconcile measurements and rendering, then add focused layout regression
-  coverage if feasible.
-- `Epub::load`'s new-book CSS path still checks ParseResult != Error, whereas the
-  cached-book path treats only Complete as a promoted cache. Review partial and
-  low-memory outcomes for unnecessary section invalidation.
-- Confirm toolbar More actions on image-only pages, allocation-failure paths,
-  touch routes for custom manga/library screens, and grayscale/SD-memory lifecycle.
+**Fixed:**
+
+- **Vertical progress/sync jump.** `EpubReaderActivity::onReaderMenuConfirm`'s
+  visible-offset branch tested only `section`, which is always null in vertical
+  mode, so every jump took the `else` and set `pendingOffsetJump` — a channel only
+  the horizontal path consumed. `verticalSection` was never reset, leaving the
+  stale chapter on screen. The handler now resolves same-spine jumps against
+  whichever engine is active and drops both engines on a cross-spine jump; the
+  vertical builder now consumes `pendingOffsetJump`, which (unlike
+  `cachedVisibleTextOffset`) stays valid across spines.
+- **Offset cleared before use.** Horizontal section-cache loading reset
+  `cachedVisibleTextOffset` before the `offsetJump` expression read it, so the
+  fallback was always `nullopt` on a cache hit and the position fell back to a
+  page number numbered in the other layout. The anchor is now captured into
+  `carriedOffset` before the reset.
+- **Missing letter spacing.** The greedy-breaking and natural-gap `getSpaceAdvance`
+  calls in `ParsedText` now pass `blockStyle.letterSpacing`, matching the render
+  paths and every sibling call.
+
+**Not defects:**
+
+- *Vertical toolbar overlay* — already correct. `renderOverlayAfterPage()` is called
+  at both vertical tails (the early-display return and the normal tail), so the
+  overlay is attached to vertical rendering. The log entry was stale.
+- *`Epub::load` CSS `ParseResult` asymmetry* — overstated. A transient CSS failure
+  is **not** persisted: `CssParser::endCacheAppend` refuses to promote when
+  `heapTruncated_` or `ruleGrowthStopped_` is set, deletes the tmp file and lets the
+  next open retry, so the "never persist a transient failure" rule already holds.
+  What remains is a narrow inconsistency: the new-book path invalidates the sections
+  dir on `Partial` while the cached path only does so on `Complete`. On a genuinely
+  new book there are no prior sections, so the practical impact is a redundant
+  rebuild rather than wrong data. Left as-is by agreement; revisit only if section
+  rebuild cost becomes visible.
+
+Still unverified (unchanged): toolbar More actions on image-only pages,
+allocation-failure paths, and grayscale/SD-memory lifecycle.
+
+**Device checks for the three fixes** (none are covered by the host suite): in a
+vertical Japanese book, use reader menu → change progress and a KOSync pull to jump
+both within the current chapter and to a different chapter, confirming the landing
+position each time; then toggle Vertical Text off and on over an already-cached
+chapter and confirm the position holds. The letter-spacing fix needs a book with CSS
+`letter-spacing` on justified text.
 
 ### Matcha-added touch support plan
 
