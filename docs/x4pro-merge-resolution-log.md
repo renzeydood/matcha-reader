@@ -10,8 +10,10 @@ been re-verified: three were real and are fixed, two were not defects (see that
 section); the two position fixes are confirmed on hardware.
 Most recent work: three bugs the user found while exercising the Vertical Text toggle
 — a stale settings row, overrides never persisting (critical), and wrong word-lookup
-highlight geometry in horizontal mode. All fixed and build/test-validated; see
-"Vertical-text toggle follow-up bugs" below for the device checks they need.
+highlight geometry in horizontal mode. Persistence and geometry are device-confirmed;
+the settings row needed a second fix (the row had no ON/OFF value at all), and a
+wrapped word's selection box is now split per line. See "Vertical-text toggle
+follow-up bugs" below for the outstanding device checks.
 This section supersedes older progress statements below, which are retained as history.
 This log is the durable resume point after usage-limit interruptions. No build is running.
 See the latest result and task table below before consulting historical failure notes.
@@ -400,13 +402,18 @@ argument.
 Found by the user while exercising the Vertical Text toggle after the position
 fixes above landed. All three are fixed; none were regressions from that work.
 
-- **Settings row did not repaint after toggling.** The `DynamicToggle` branch in
-  `SettingsActivity::onConfirm` returned early to skip `saveSettings()` — the
-  override is book-scoped, not a global setting — but that early return also
-  skipped `rebuildSettingsLists()`, which is what regenerates the row's value
-  text. The row kept reading "Vertical" until the user left and re-entered the
-  menu. The branch now rebuilds the lists (preserving `activeNav().selected`
-  across the rebuild) and requests an update, still without `saveSettings()`.
+- **Settings row did not repaint after toggling.** The real cause was in
+  `settingValueText()`, which had branches for `TOGGLE` + `valuePtr` and `ENUM` +
+  `valueGetter` but none for `TOGGLE` + `valueGetter` — so a `DynamicToggle` row
+  fell through to `return ""` and rendered its label with **no ON/OFF beside it at
+  all**. Nothing ever changed because nothing was ever drawn. Added the missing
+  branch.
+
+  A first attempt fixed the wrong thing: it rebuilt the settings lists on toggle,
+  on the theory that the rebuild is what repaints the value. It isn't —
+  `buildScreen()` re-runs `settingValueText()` for every row on every render, so
+  `requestUpdate()` alone suffices and the rebuild was pure churn across four
+  category vectors. Reverted to a plain `requestUpdate()`.
 
 - **Vertical never stuck; horizontal was permanent.** *(critical)* The
   vertical/furigana overrides live in `progress.bin` bytes 6 and 7, and their only
@@ -462,8 +469,25 @@ fixes above landed. All three are fixed; none were regressions from that work.
   open, which is correct — the cache records *which* glyphs are selectable, a text
   property, not where they sit.
 
-Validation: X4 Pro build SUCCESS (140.24 s, RAM 30.8%, Flash 94.4%); ESP32-C3 build
-SUCCESS (117.64 s); host suite 232/232 in 4.29 s; `bin/clang-format-fix -g` applied.
+- **Wrapped words got one slab-sized box.** *(follow-up, found on device)* The
+  highlight geometry above was computed as a single min/max union over the word's
+  glyphs. A word that wraps onto the next line then produced a rectangle spanning
+  from its first character to its last — covering every intervening line, so the
+  box looked like it had selected the whole sentence. The union also broke touch:
+  `findSelectableWordAt` hit-tested that same rectangle, so a wrapped word claimed
+  taps meant for unrelated words between its halves.
+
+  `getWordBoundingBox` is replaced by `getWordSegments(idx, out, maxOut)`, which
+  emits one rect per line the word occupies (breaking on a change of y in
+  horizontal text, of x in tategaki, since glyphs arrive in reading order) into a
+  caller-supplied stack array — no allocation, no `std::function`. Both the
+  underline/bousen pass and the selection box draw per segment; hit-testing tests
+  each segment separately. `MAX_WORD_SEGMENTS = 4` is the cap; a dictionary match
+  is a few characters, so two is the realistic worst case.
+
+Validation: X4 Pro build SUCCESS (90.04 s, RAM 30.8%, Flash 94.4%); ESP32-C3 build
+SUCCESS (67.00 s, RAM 17.6%, Flash 96.4%); host suite 232/232 in 3.20 s;
+`bin/clang-format-fix -g` clean.
 
 ### Matcha-added touch support plan
 

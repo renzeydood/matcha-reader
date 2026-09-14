@@ -382,13 +382,10 @@ void SettingsActivity::toggleCurrentSetting() {
     // Backed by state outside CrossPointSettings (SettingInfo::DynamicToggle) -- e.g. the
     // per-book Vertical Text / Furigana overrides. Skips the shared tail's saveSettings(): this
     // state isn't part of that singleton (the caller reads it back from finish()), so saving
-    // would write the settings file on every toggle for no reason. The list rebuild IS needed --
-    // it is what repaints the row's value, and without it the row keeps showing the old state
-    // until the screen is left.
+    // would write the settings file on every toggle for no reason. No list rebuild either --
+    // buildScreen() re-runs settingValueText() for every row on each render, so requesting an
+    // update is enough to repaint the new ON/OFF.
     setting.valueSetter(setting.valueGetter() == 0 ? 1 : 0);
-    const int selected = ringPos();
-    rebuildSettingsLists();
-    activeNav().selected = std::min(selected, settingsCount);
     requestUpdate();
     return;
   } else if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
@@ -554,6 +551,11 @@ void SettingsActivity::openSleepTimeoutPicker() {
 std::string SettingsActivity::settingValueText(const SettingInfo& setting) {
   if (setting.type == SettingType::TOGGLE && setting.valuePtr != nullptr) {
     return SETTINGS.*(setting.valuePtr) ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
+  }
+  if (setting.type == SettingType::TOGGLE && setting.valueGetter) {
+    // SettingInfo::DynamicToggle -- state lives outside CrossPointSettings, so there is no
+    // valuePtr to read. Without this the row renders its label with no ON/OFF beside it.
+    return setting.valueGetter() != 0 ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
   }
   if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
     // Guard like the valueGetter branch below: a corrupt/migrated settings

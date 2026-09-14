@@ -512,19 +512,24 @@ int EpubReaderWordLookupActivity::findSelectableWordAt(int tx, int ty) const {
   int bestIdx = -1;
   uint32_t minDistSq = UINT32_MAX;
 
-  for (size_t i = 0; i < scan.selectableGlyphs.size(); i++) {
-    WordRect r = getWordBoundingBox(i);
-    if (!r.valid) continue;
+  WordRect segs[MAX_WORD_SEGMENTS];
 
-    if (tx >= r.x - 8 && tx <= r.x + r.w + 8 && ty >= r.y - 8 && ty <= r.y + r.h + 8) {
-      int cx = r.x + r.w / 2;
-      int cy = r.y + r.h / 2;
-      int dx = cx - tx;
-      int dy = cy - ty;
-      uint32_t distSq = static_cast<uint32_t>(dx * dx + dy * dy);
-      if (distSq < minDistSq) {
-        minDistSq = distSq;
-        bestIdx = static_cast<int>(i);
+  for (size_t i = 0; i < scan.selectableGlyphs.size(); i++) {
+    // Per-line segments, not the union: a wrapped word's bounding box would otherwise claim
+    // the whole span between its two halves and swallow taps meant for words in between.
+    const size_t n = getWordSegments(i, segs, MAX_WORD_SEGMENTS);
+    for (size_t s = 0; s < n; s++) {
+      const WordRect& r = segs[s];
+      if (tx >= r.x - 8 && tx <= r.x + r.w + 8 && ty >= r.y - 8 && ty <= r.y + r.h + 8) {
+        int cx = r.x + r.w / 2;
+        int cy = r.y + r.h / 2;
+        int dx = cx - tx;
+        int dy = cy - ty;
+        uint32_t distSq = static_cast<uint32_t>(dx * dx + dy * dy);
+        if (distSq < minDistSq) {
+          minDistSq = distSq;
+          bestIdx = static_cast<int>(i);
+        }
       }
     }
   }
@@ -618,9 +623,9 @@ void EpubReaderWordLookupActivity::loop() {
   }
 }
 
-EpubReaderWordLookupActivity::WordRect EpubReaderWordLookupActivity::getWordBoundingBox(size_t selectIdx) const {
-  WordRect rect;
-  if (selectIdx >= scan.selectableGlyphs.size() || selectIdx >= scan.selectToAllIdx.size()) return rect;
+size_t EpubReaderWordLookupActivity::getWordSegments(size_t selectIdx, WordRect* out, size_t maxOut) const {
+  if (out == nullptr || maxOut == 0) return 0;
+  if (selectIdx >= scan.selectableGlyphs.size() || selectIdx >= scan.selectToAllIdx.size()) return 0;
 
   const size_t allStart = scan.selectToAllIdx[selectIdx];
   const size_t numChars =
@@ -631,73 +636,91 @@ EpubReaderWordLookupActivity::WordRect EpubReaderWordLookupActivity::getWordBoun
   marginTop += SETTINGS.screenMargin;
   marginLeft += SETTINGS.screenMargin;
 
-  int minX = INT_MAX, minY = INT_MAX;
-  int maxX = INT_MIN, maxY = INT_MIN;
+  const int cellPx = vpage ? verticalCellPx(renderer, fontId) : 0;
 
-  if (vpage) {
-    const int cellPx = verticalCellPx(renderer, fontId);
-    for (size_t c = 0; c < numChars && (allStart + c) < scan.allGlyphs.size(); c++) {
-      const auto& glyph = scan.allGlyphs[allStart + c];
-      if (glyph.x == 0 && glyph.y == 0) continue;
-      int cellX = glyph.x + marginLeft;
-      int cellY = glyph.y + marginTop;
+  size_t count = 0;
+  int lineKey = 0;  // cellY horizontally, cellX vertically -- changes when the word wraps
 
-      if (cellX < minX) minX = cellX;
-      if (cellY < minY) minY = cellY;
-      if (cellX + cellPx > maxX) maxX = cellX + cellPx;
-      if (cellY + cellPx > maxY) maxY = cellY + cellPx;
-    }
-  } else if (hpage) {
-    for (size_t c = 0; c < numChars && (allStart + c) < scan.allGlyphs.size(); c++) {
-      const auto& glyph = scan.allGlyphs[allStart + c];
-      if (glyph.x == 0 && glyph.y == 0) continue;
-      const int cellX = glyph.x + marginLeft;
-      const int cellY = glyph.y + marginTop;
+  for (size_t c = 0; c < numChars && (allStart + c) < scan.allGlyphs.size(); c++) {
+    const auto& glyph = scan.allGlyphs[allStart + c];
+    if (glyph.x == 0 && glyph.y == 0) continue;
+
+    const int cellX = glyph.x + marginLeft;
+    const int cellY = glyph.y + marginTop;
+
+    int charW, charH, key;
+    if (vpage) {
+      charW = cellPx;
+      charH = cellPx;
+      key = cellX;  // tategaki wraps to a new column
+    } else {
       // Advance and box height were measured during the scan with this glyph's own word font
       // and style; re-measuring here with the base font would drift on styled or sized runs.
-      const int charW = glyph.column > 0 ? glyph.column : glyph.row;
-      const int charH = glyph.row;
+      charW = glyph.column > 0 ? glyph.column : glyph.row;
+      charH = glyph.row;
+      key = cellY;
+    }
 
-      if (cellX < minX) minX = cellX;
-      if (cellY < minY) minY = cellY;
-      if (cellX + charW > maxX) maxX = cellX + charW;
-      if (cellY + charH > maxY) maxY = cellY + charH;
+    if (count > 0 && key == lineKey) {
+      WordRect& seg = out[count - 1];
+      const int right = std::max(seg.x + seg.w, cellX + charW);
+      const int bottom = std::max(seg.y + seg.h, cellY + charH);
+      seg.x = std::min(seg.x, cellX);
+      seg.y = std::min(seg.y, cellY);
+      seg.w = right - seg.x;
+      seg.h = bottom - seg.y;
+      continue;
+    }
+
+    if (count == maxOut) break;
+    WordRect& seg = out[count++];
+    seg.x = cellX;
+    seg.y = cellY;
+    seg.w = charW;
+    seg.h = charH;
+    seg.valid = true;
+    lineKey = key;
+  }
+
+  // Drop degenerate segments (zero-advance glyphs) so callers can trust every rect they get.
+  size_t kept = 0;
+  for (size_t i = 0; i < count; i++) {
+    if (out[i].w > 0 && out[i].h > 0) {
+      if (kept != i) out[kept] = out[i];
+      kept++;
     }
   }
-
-  if (minX != INT_MAX && maxX > minX && maxY > minY) {
-    rect.x = minX;
-    rect.y = minY;
-    rect.w = maxX - minX;
-    rect.h = maxY - minY;
-    rect.valid = true;
-  }
-  return rect;
+  return kept;
 }
 
 void EpubReaderWordLookupActivity::drawWordHighlights() {
   if (scan.selectableGlyphs.empty()) return;
 
+  WordRect segs[MAX_WORD_SEGMENTS];
+
   // 1. Draw side-lines (bousen) or underlines for all detected words
   for (size_t i = 0; i < scan.selectableGlyphs.size(); i++) {
     if (static_cast<int>(i) == cursorIndex) continue;
-    WordRect r = getWordBoundingBox(i);
-    if (!r.valid) continue;
-
-    if (vpage) {
-      // Vertical text: Japanese side-line (傍線) on LEFT side of word column
-      // (Furigana is on the right side of the column, so left side avoids overlap)
-      renderer.fillRect(r.x - 3, r.y, 2, r.h, true);
-    } else {
-      // Horizontal text: underline under word line
-      renderer.fillRect(r.x, r.y + r.h + 1, r.w, 2, true);
+    const size_t n = getWordSegments(i, segs, MAX_WORD_SEGMENTS);
+    for (size_t s = 0; s < n; s++) {
+      const WordRect& r = segs[s];
+      if (vpage) {
+        // Vertical text: Japanese side-line (傍線) on LEFT side of word column
+        // (Furigana is on the right side of the column, so left side avoids overlap)
+        renderer.fillRect(r.x - 3, r.y, 2, r.h, true);
+      } else {
+        // Horizontal text: underline under word line
+        renderer.fillRect(r.x, r.y + r.h + 1, r.w, 2, true);
+      }
     }
   }
 
-  // 2. Active word highlight box
+  // 2. Active word highlight box -- one box per line so a wrapped word doesn't get a slab
+  // drawn over the text between its two halves.
   if (cursorIndex >= 0 && cursorIndex < static_cast<int>(scan.selectableGlyphs.size())) {
-    WordRect r = getWordBoundingBox(static_cast<size_t>(cursorIndex));
-    if (r.valid) {
+    const size_t n = getWordSegments(static_cast<size_t>(cursorIndex), segs, MAX_WORD_SEGMENTS);
+    for (size_t s = 0; s < n; s++) {
+      const WordRect& r = segs[s];
       renderer.drawRect(r.x - 2, r.y - 2, r.w + 4, r.h + 4, true);
       renderer.drawRect(r.x - 3, r.y - 3, r.w + 6, r.h + 6, true);
     }

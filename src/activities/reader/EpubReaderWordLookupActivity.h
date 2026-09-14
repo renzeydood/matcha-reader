@@ -101,7 +101,14 @@ class EpubReaderWordLookupActivity final : public Activity {
     bool valid = false;
   };
 
-  WordRect getWordBoundingBox(size_t selectIdx) const;
+  /// A word that wraps across a line (or a column, in tategaki) occupies several disjoint
+  /// rectangles. Merging them into one bounding box would draw a slab over everything in
+  /// between, so callers work with the per-line segments instead.
+  static constexpr size_t MAX_WORD_SEGMENTS = 4;
+
+  /// Fills `out` with one rect per line the word occupies, in reading order, and returns how
+  /// many were written. Segments beyond `maxOut` are dropped.
+  size_t getWordSegments(size_t selectIdx, WordRect* out, size_t maxOut) const;
   void drawWordHighlights();
   void renderFloatingPanel(const Rect& screen);
   void renderContentArea(const Rect& screen, int contentTop);
