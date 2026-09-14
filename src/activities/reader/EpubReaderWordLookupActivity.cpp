@@ -15,7 +15,9 @@
 
 #include "CrossPointSettings.h"
 #include "DefinitionTextRenderer.h"
+#include "DictionaryDefinitionActivity.h"
 #include "Epub/Page.h"
+#include "Epub/blocks/VerticalTextBlock.h"
 #include "MappedInputManager.h"
 #include "ReaderUtils.h"
 #include "components/UITheme.h"
@@ -23,13 +25,16 @@
 
 EpubReaderWordLookupActivity::EpubReaderWordLookupActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                            const VerticalPage& page, std::string scanCachePath,
-                                                           const uint16_t spineIndex, const uint16_t pageIndex)
+                                                           const uint16_t spineIndex, const uint16_t pageIndex,
+                                                           int readerFontId)
     : Activity("WordLookup", renderer, mappedInput),
+      vpage(&page),
       scanCachePath(std::move(scanCachePath)),
       scanSpine(spineIndex),
       scanPage(pageIndex) {
   const size_t slash = this->scanCachePath.find_last_of('/');
   if (slash != std::string::npos) bookCachePath = this->scanCachePath.substr(0, slash);
+  fontId = (readerFontId != 0) ? readerFontId : SETTINGS.getReaderFontId();
   reclaimFontHeap();  // BEFORE building the scan -- see reclaimFontHeap()
   scan.initFromVerticalPage(page);
   initScanFromCacheOrBurst("vertical");
@@ -37,13 +42,16 @@ EpubReaderWordLookupActivity::EpubReaderWordLookupActivity(GfxRenderer& renderer
 
 EpubReaderWordLookupActivity::EpubReaderWordLookupActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                            const Page& page, std::string scanCachePath,
-                                                           const uint16_t spineIndex, const uint16_t pageIndex)
+                                                           const uint16_t spineIndex, const uint16_t pageIndex,
+                                                           int readerFontId)
     : Activity("WordLookup", renderer, mappedInput),
       scanCachePath(std::move(scanCachePath)),
       scanSpine(spineIndex),
       scanPage(pageIndex) {
   const size_t slash = this->scanCachePath.find_last_of('/');
   if (slash != std::string::npos) bookCachePath = this->scanCachePath.substr(0, slash);
+  fontId = (readerFontId != 0) ? readerFontId : SETTINGS.getReaderFontId();
+  hpage = std::make_shared<Page>(page);
   reclaimFontHeap();  // BEFORE building the scan -- see reclaimFontHeap()
   scan.initFromPage(page);
   initScanFromCacheOrBurst("horizontal");
@@ -499,8 +507,32 @@ void EpubReaderWordLookupActivity::performLookupImpl() {
   requestUpdate();
 }
 
+int EpubReaderWordLookupActivity::findSelectableWordAt(int tx, int ty) const {
+  if (scan.selectableGlyphs.empty()) return -1;
+  int bestIdx = -1;
+  uint32_t minDistSq = UINT32_MAX;
+
+  for (size_t i = 0; i < scan.selectableGlyphs.size(); i++) {
+    WordRect r = getWordBoundingBox(i);
+    if (!r.valid) continue;
+
+    if (tx >= r.x - 8 && tx <= r.x + r.w + 8 && ty >= r.y - 8 && ty <= r.y + r.h + 8) {
+      int cx = r.x + r.w / 2;
+      int cy = r.y + r.h / 2;
+      int dx = cx - tx;
+      int dy = cy - ty;
+      uint32_t distSq = static_cast<uint32_t>(dx * dx + dy * dy);
+      if (distSq < minDistSq) {
+        minDistSq = distSq;
+        bestIdx = static_cast<int>(i);
+      }
+    }
+  }
+  return bestIdx;
+}
+
 void EpubReaderWordLookupActivity::loop() {
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back) ||
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back) || mappedInput.wasBackGesture() ||
       ReaderUtils::powerClickLeavesWordLookup(mappedInput)) {
     ActivityResult result;
     result.isCancelled = true;
@@ -509,50 +541,72 @@ void EpubReaderWordLookupActivity::loop() {
     return;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    performLookup();
+  // Touch swipe handling
+  const auto swipe = mappedInput.wasSwipe();
+  if (swipe == MappedInputManager::SwipeDir::Left) {
+    moveCursor(1);
+    return;
+  } else if (swipe == MappedInputManager::SwipeDir::Right) {
+    moveCursor(-1);
     return;
   }
 
-  const bool sideButtonsForLookup =
-      SETTINGS.wordLookupSideButtons != 0 && SETTINGS.sideButtonLayout != CrossPointSettings::SIDE_BUTTONS_DISABLED;
-  const bool swapFrontButtons = mappedInput.isNavDirectionSwapped();
-  const auto nextEntryButton =
-      sideButtonsForLookup ? MappedInputManager::Button::PageForward : MappedInputManager::Button::Right;
-  const auto previousEntryButton =
-      sideButtonsForLookup ? MappedInputManager::Button::PageBack : MappedInputManager::Button::Left;
-  const auto scrollDownButton =
-      sideButtonsForLookup ? (swapFrontButtons ? MappedInputManager::Button::Left : MappedInputManager::Button::Right)
-                           : MappedInputManager::Button::Down;
-  const auto scrollUpButton =
-      sideButtonsForLookup ? (swapFrontButtons ? MappedInputManager::Button::Right : MappedInputManager::Button::Left)
-                           : MappedInputManager::Button::Up;
-  buttonNavigator.onPressAndContinuous({nextEntryButton}, [this] { moveCursor(1); });
-  buttonNavigator.onPressAndContinuous({previousEntryButton}, [this] { moveCursor(-1); });
-  buttonNavigator.onPressAndContinuous({scrollDownButton}, [this] {
-    if (hasResult && scrollOffset < maxScroll) {
-      scrollOffset = std::min(maxScroll, scrollOffset + 5);
-      requestUpdate();
-    }
-  });
-  buttonNavigator.onPressAndContinuous({scrollUpButton}, [this] {
-    if (scrollOffset > 0) {
-      scrollOffset = std::max(0, scrollOffset - 5);
-      requestUpdate();
-    }
-  });
+  // Touch tap handling
+  int tx = 0, ty = 0;
+  if (mappedInput.wasScreenTapped(tx, ty)) {
+    auto& theme = UITheme::getInstance();
+    Rect screen = theme.getScreenSafeArea(renderer, true, false);
 
-  // Progressive background scan: keep mapping the page's selectable words in small slices
-  // between input polls (skipLoopDelay() holds full CPU and fast ticks while this runs, so a
-  // slice never swallows a button press). Everything here runs on the main task -- the render
-  // task only ever reads counter sizes -- so no lock is needed and, unlike the abandoned
-  // reader-idle precompute, nothing can starve another activity's rendering.
-  // The render task's font decompressor can temporarily consume nearly the entire largest block.
-  // Do not overlap that transient allocation with dictionary reads/vector growth.
+    // Direct word hit-test on page text
+    const int wordHit = findSelectableWordAt(tx, ty);
+    if (wordHit >= 0) {
+      if (wordHit == cursorIndex) {
+        // Tapped active word -> open full definition view!
+        if (hasResult) {
+          startActivityForResult(
+              std::make_unique<DictionaryDefinitionActivity>(renderer, mappedInput, resultHeadword, resultDefinition),
+              [this](const ActivityResult&) { requestUpdate(); });
+        }
+      } else {
+        cursorIndex = wordHit;
+        performLookup();
+      }
+      return;
+    }
+
+    // Side navigation
+    if (tx < screen.x + screen.width * 0.3) {
+      moveCursor(-1);
+      return;
+    } else if (tx > screen.x + screen.width * 0.7) {
+      moveCursor(1);
+      return;
+    }
+  }
+
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    if (hasResult) {
+      startActivityForResult(
+          std::make_unique<DictionaryDefinitionActivity>(renderer, mappedInput, resultHeadword, resultDefinition),
+          [this](const ActivityResult&) { requestUpdate(); });
+    }
+    return;
+  }
+
+  const bool sideButtonsForLookup = (SETTINGS.wordLookupSideButtons != 0 || mappedInput.hasTouch()) &&
+                                    SETTINGS.sideButtonLayout != CrossPointSettings::SIDE_BUTTONS_DISABLED;
+  buttonNavigator.onPressAndContinuous(
+      {sideButtonsForLookup ? MappedInputManager::Button::PageForward : MappedInputManager::Button::Right,
+       MappedInputManager::Button::NavNext},
+      [this] { moveCursor(1); });
+  buttonNavigator.onPressAndContinuous(
+      {sideButtonsForLookup ? MappedInputManager::Button::PageBack : MappedInputManager::Button::Left,
+       MappedInputManager::Button::NavPrevious},
+      [this] { moveCursor(-1); });
+
+  // Progressive background scan
   if (!scan.isDone() && !RenderLock::peek()) {
     const bool done = stepScan(40);
-    // The open can show "No match" if the initial burst found nothing yet -- promote the first
-    // word as soon as the background scan discovers it.
     if (!hasResult && !scan.selectableGlyphs.empty()) {
       performLookup();
       requestUpdate();
@@ -564,145 +618,141 @@ void EpubReaderWordLookupActivity::loop() {
   }
 }
 
-void EpubReaderWordLookupActivity::renderContentArea(const Rect& screen, int contentTop) {
-  auto metrics = UITheme::getInstance().getMetrics();
-  // Built-in font on purpose, NOT SETTINGS.getReaderFontId(): the lookup panel's definitions
-  // and UI already render in built-in fonts, so an SD reader font (e.g. UD Digi Kyokasho) made
-  // the headword a different typeface than the rest of the view -- and pulled whole SD font
-  // groups (16KB decompression buffers each) into a heap that is already at its tightest here.
-  const int defFont = DefinitionText::wordLookupFontId();
-  const uint16_t defScale = DefinitionText::wordLookupFontScale();
-  sdFontSystem.ensureWordLookupFallback(renderer, defFont, DefinitionText::wordLookupFontPointSize());
+EpubReaderWordLookupActivity::WordRect EpubReaderWordLookupActivity::getWordBoundingBox(size_t selectIdx) const {
+  WordRect rect;
+  if (selectIdx >= scan.selectableGlyphs.size() || selectIdx >= scan.selectToAllIdx.size()) return rect;
 
-  // Bulk-load every glyph the headword + definition need before drawing/measuring any of them --
-  // same fix, and same root cause, as the vertical-page-turn slowness fixed earlier this session.
-  // Without this, dictionary definitions (which merge up to 5 entries and can run to hundreds of
-  // characters spanning many different compressed font groups) fall through the slow one-by-one
-  // glyph fallback path a character at a time. ONE prewarm per string: the FontDecompressor reuses
-  // its 4 page-buffer slots WITHIN a call but not across calls, so per-line prewarming exhausts
-  // them ("All 4 slots full") and is slower, not faster.
-  if (hasResult) {
-    if (auto* fcm = renderer.getFontCacheManager()) {
-      fcm->clearCache();
-      fcm->prewarmCache(defFont, resultHeadword.c_str(), 1 << EpdFontFamily::BOLD);
-      // Prewarm only the ON-SCREEN slice of the definition, in ONE call. A merged 5-entry
-      // definition can run to thousands of bytes, but only ~13 lines show; warming the whole
-      // thing was the ~1s-per-step navigation cost (renders serialize on the RenderLock, so a
-      // slow render stalls the next keypress). ~1KB covers a full screen of Latin OR CJK. Only
-      // when scrollOffset==0 (navigating a new word); a scrolled view warms the whole definition
-      // since its visible window is further in. ONE call, not per-line: the decompressor reuses
-      // its 4 page-buffer slots within a call but not across calls.
-      constexpr size_t kVisiblePrewarmBytes = 1024;
-      if (scrollOffset == 0 && resultDefinition.size() > kVisiblePrewarmBytes) {
-        size_t cut = kVisiblePrewarmBytes;  // back up to a UTF-8 lead byte so the last char is whole
-        while (cut > 0 && (static_cast<unsigned char>(resultDefinition[cut]) & 0xC0) == 0x80) cut--;
-        const char saved = resultDefinition[cut];
-        resultDefinition[cut] = '\0';  // safe: render task holds the lock, sole accessor here
-        renderer.prewarmText(defFont, resultDefinition.c_str(), 1 << EpdFontFamily::REGULAR);
-        resultDefinition[cut] = saved;
-      } else {
-        renderer.prewarmText(defFont, resultDefinition.c_str(), 1 << EpdFontFamily::REGULAR);
-      }
+  const size_t allStart = scan.selectToAllIdx[selectIdx];
+  const size_t numChars =
+      (static_cast<int>(selectIdx) == cursorIndex && resultMatchLen > 0) ? static_cast<size_t>(resultMatchLen) : 1;
+
+  int marginTop = 0, marginLeft = 0, marginRight = 0, marginBottom = 0;
+  renderer.getOrientedViewableTRBL(&marginTop, &marginRight, &marginBottom, &marginLeft);
+  marginTop += SETTINGS.screenMargin;
+  marginLeft += SETTINGS.screenMargin;
+
+  int minX = INT_MAX, minY = INT_MAX;
+  int maxX = INT_MIN, maxY = INT_MIN;
+
+  if (vpage) {
+    const int cellPx = verticalCellPx(renderer, fontId);
+    for (size_t c = 0; c < numChars && (allStart + c) < scan.allGlyphs.size(); c++) {
+      const auto& glyph = scan.allGlyphs[allStart + c];
+      if (glyph.x == 0 && glyph.y == 0) continue;
+      int cellX = glyph.x + marginLeft;
+      int cellY = glyph.y + marginTop;
+
+      if (cellX < minX) minX = cellX;
+      if (cellY < minY) minY = cellY;
+      if (cellX + cellPx > maxX) maxX = cellX + cellPx;
+      if (cellY + cellPx > maxY) maxY = cellY + cellPx;
+    }
+  } else if (hpage) {
+    const int lineH = renderer.getLineHeight(fontId);
+    for (size_t c = 0; c < numChars && (allStart + c) < scan.allGlyphs.size(); c++) {
+      const auto& glyph = scan.allGlyphs[allStart + c];
+      if (glyph.x == 0 && glyph.y == 0) continue;
+      int cellX = glyph.x + marginLeft;
+      int cellY = glyph.y + marginTop;
+
+      std::string utf8Char;
+      WordSelectionScan::encodeUtf8(glyph.codepoint, utf8Char);
+      int charW = renderer.getTextAdvanceX(fontId, utf8Char.c_str(), EpdFontFamily::REGULAR);
+      if (charW <= 0) charW = lineH;
+
+      if (cellX < minX) minX = cellX;
+      if (cellY < minY) minY = cellY;
+      if (cellX + charW > maxX) maxX = cellX + charW;
+      if (cellY + lineH > maxY) maxY = cellY + lineH;
     }
   }
 
-  if (scan.selectableGlyphs.empty() || !hasResult) {
-    // "No match found" is only the truth once nothing is still in flight; during fast
-    // navigation or while the progressive scan is still mapping the page, show Loading.
-    const bool stillWorking = lookupInFlight || !scan.isDone();
-    UITheme::drawCenteredText(renderer, screen, UI_12_FONT_ID, screen.y + screen.height / 2,
-                              stillWorking ? tr(STR_LOADING) : tr(STR_NO_MATCH), true);
-  } else {
-    const int maxWidth = screen.width - metrics.contentSidePadding * 2;
-    const int textX = screen.x + metrics.contentSidePadding;
+  if (minX != INT_MAX && maxX > minX && maxY > minY) {
+    rect.x = minX;
+    rect.y = minY;
+    rect.w = maxX - minX;
+    rect.h = maxY - minY;
+    rect.valid = true;
+  }
+  return rect;
+}
 
-    int defY;
+void EpubReaderWordLookupActivity::drawWordHighlights() {
+  if (scan.selectableGlyphs.empty()) return;
 
-    if (scrollOffset == 0) {
-      // Headword at the top (position counter is now in the header).
-      renderer.drawTextScaled(defFont, textX, contentTop, resultHeadword.c_str(), defScale, true, EpdFontFamily::BOLD);
-      defY = contentTop + renderer.getLineHeightScaled(defFont, defScale) + metrics.verticalSpacing;
+  // 1. Draw side-lines (bousen) or underlines for all detected words
+  for (size_t i = 0; i < scan.selectableGlyphs.size(); i++) {
+    if (static_cast<int>(i) == cursorIndex) continue;
+    WordRect r = getWordBoundingBox(i);
+    if (!r.valid) continue;
+
+    if (vpage) {
+      // Vertical text: Japanese side-line (傍線) on LEFT side of word column
+      // (Furigana is on the right side of the column, so left side avoids overlap)
+      renderer.fillRect(r.x - 3, r.y, 2, r.h, true);
     } else {
-      // When scrolled, show a compact header line with the headword + scroll mark.
-      std::string scrollInfo = resultHeadword;
-      renderer.drawTextScaled(defFont, textX, contentTop, scrollInfo.c_str(), defScale, true);
-      defY = contentTop + renderer.getLineHeightScaled(defFont, defScale) + 4;
+      // Horizontal text: underline under word line
+      renderer.fillRect(r.x, r.y + r.h + 1, r.w, 2, true);
     }
+  }
 
-    const int defLineH = renderer.getLineHeightScaled(defFont, defScale);
-    // screen.height already excludes the button-hints band, so its bottom edge
-    // is the top of the buttons; stay a hair above it.
-    const int maxDefY = screen.y + screen.height - 2;
-    const int firstDefY = defY;
-    const auto wrap = DefinitionText::drawWrapped(renderer, defFont, resultDefinition, textX, defY, defLineH, maxWidth,
-                                                  maxDefY, scrollOffset, defScale);
-
-    totalLines = wrap.totalLines;
-    // Leave at least a screenful visible: max scroll = total - capacity
-    const int visibleCapacity = (maxDefY - firstDefY) / defLineH;
-    maxScroll = std::max(0, totalLines - visibleCapacity);
+  // 2. Active word highlight box
+  if (cursorIndex >= 0 && cursorIndex < static_cast<int>(scan.selectableGlyphs.size())) {
+    WordRect r = getWordBoundingBox(static_cast<size_t>(cursorIndex));
+    if (r.valid) {
+      renderer.drawRect(r.x - 2, r.y - 2, r.w + 4, r.h + 4, true);
+      renderer.drawRect(r.x - 3, r.y - 3, r.w + 6, r.h + 6, true);
+    }
   }
 }
 
+void EpubReaderWordLookupActivity::renderContentArea(const Rect& screen, int contentTop) {}
+
 void EpubReaderWordLookupActivity::render(RenderLock&&) {
   auto& theme = UITheme::getInstance();
-  auto metrics = theme.getMetrics();
   Rect screen = theme.getScreenSafeArea(renderer, true, false);
 
-  const int contentTop = screen.y + metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  renderer.clearScreen();
 
-  // Position counter (35/50) shown right-aligned on the header baseline.
+  // 1. Draw page text background
+  int marginTop = 0, marginLeft = 0, marginRight = 0, marginBottom = 0;
+  renderer.getOrientedViewableTRBL(&marginTop, &marginRight, &marginBottom, &marginLeft);
+  marginTop += SETTINGS.screenMargin;
+  marginLeft += SETTINGS.screenMargin;
+
+  if (vpage) {
+    VerticalTextBlock block(*vpage);
+    block.render(renderer, fontId, fontId, marginLeft, marginTop, true);
+  } else if (hpage) {
+    hpage->render(renderer, fontId, marginLeft, marginTop, false);
+  }
+
+  // 2. Draw word highlight side-lines/underlines and active selection box
+  drawWordHighlights();
+
+  // 3. Draw clean bottom button hints with position counter
   std::string posText;
-  if (hasResult && !scan.selectableGlyphs.empty()) {
-    // Total is unknown until the progressive scan finishes; show an ellipsis meanwhile.
+  if (!scan.selectableGlyphs.empty()) {
     posText = std::to_string(cursorIndex + 1) + "/" +
               (scan.isDone() ? std::to_string(scan.selectableGlyphs.size()) : std::string("\xe2\x80\xa6"));
   }
-  const Rect headerRect{screen.x, screen.y + metrics.topPadding, screen.width, metrics.headerHeight};
 
-  if (!initialRenderDone) {
-    renderer.clearScreen();
+  const bool sideButtonsForLookup = (SETTINGS.wordLookupSideButtons != 0 || mappedInput.hasTouch()) &&
+                                    SETTINGS.sideButtonLayout != CrossPointSettings::SIDE_BUTTONS_DISABLED;
+  const auto labels =
+      mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), sideButtonsForLookup ? tr(STR_DIR_UP) : tr(STR_DIR_LEFT),
+                            sideButtonsForLookup ? tr(STR_DIR_DOWN) : tr(STR_DIR_RIGHT));
 
-    GUI.drawHeader(renderer, headerRect, tr(STR_WORD_LOOKUP), posText.empty() ? nullptr : posText.c_str());
-
-    renderContentArea(screen, contentTop);
-
-    const bool sideButtonsForLookup =
-        SETTINGS.wordLookupSideButtons != 0 && SETTINGS.sideButtonLayout != CrossPointSettings::SIDE_BUTTONS_DISABLED;
-    const auto labels =
-        mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), sideButtonsForLookup ? tr(STR_DIR_UP) : tr(STR_DIR_LEFT),
-                              sideButtonsForLookup ? tr(STR_DIR_DOWN) : tr(STR_DIR_RIGHT));
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-
-    renderer.displayBuffer();
-    initialRenderDone = true;
-    fastRefreshCount = 0;
-  } else {
-    // Clear from content top all the way to the physical bottom (including the
-    // button-hint band margins, which screen.height excludes), then redraw hints.
-    const int physBottom = renderer.getScreenHeight();
-    renderer.fillRect(0, contentTop, renderer.getScreenWidth(), physBottom - contentTop, false);
-    // Redraw the header so the position counter updates (drawHeader clears it).
-    GUI.drawHeader(renderer, headerRect, tr(STR_WORD_LOOKUP), posText.empty() ? nullptr : posText.c_str());
-    const bool sideButtonsForLookup =
-        SETTINGS.wordLookupSideButtons != 0 && SETTINGS.sideButtonLayout != CrossPointSettings::SIDE_BUTTONS_DISABLED;
-    const auto labels2 =
-        mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), sideButtonsForLookup ? tr(STR_DIR_UP) : tr(STR_DIR_LEFT),
-                              sideButtonsForLookup ? tr(STR_DIR_DOWN) : tr(STR_DIR_RIGHT));
-    GUI.drawButtonHints(renderer, labels2.btn1, labels2.btn2, labels2.btn3, labels2.btn4);
-
-    renderContentArea(screen, contentTop);
-
-    fastRefreshCount++;
-    if (fastRefreshCount >= kFullRefreshInterval) {
-      renderer.displayBuffer(HalDisplay::HALF_REFRESH);
-      fastRefreshCount = 0;
-    } else {
-      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
-    }
+  std::string confirmLabel = labels.btn2;
+  if (!posText.empty()) {
+    confirmLabel += " [";
+    confirmLabel += posText;
+    confirmLabel += "]";
   }
 
-  // The framebuffer owns the finished pixels; keeping the decompressed glyph slab until the
-  // next keypress only fragments the heap while the dictionary caches are resident.
+  GUI.drawButtonHints(renderer, labels.btn1, confirmLabel.c_str(), labels.btn3, labels.btn4);
+
+  renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+
   if (auto* fcm = renderer.getFontCacheManager()) fcm->releaseAllFontMemory();
 }

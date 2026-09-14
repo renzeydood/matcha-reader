@@ -259,10 +259,12 @@ void WordSelectionScan::initFromPage(const Page& page) {
       // Braces, not parens: Arduino.h defines a function-like `word(...)` macro.
       const std::string_view word{block.wordText(wi), block.wordTextLen(wi)};
       if (word.empty()) continue;
+      const uint16_t wx = static_cast<uint16_t>(line.xPos + block.wordXpos(wi));
+      const uint16_t wy = static_cast<uint16_t>(line.yPos);
       // Insert a separating space only between two ASCII-word boundaries.
       if (lastCp && isAsciiWord(static_cast<unsigned char>(lastCp)) &&
           isAsciiWord(static_cast<unsigned char>(word[0]))) {
-        if (!pushGlyphSafe(allGlyphs, GlyphRef{0, 0, 0, 0, ' ', 0, false})) {
+        if (!pushGlyphSafe(allGlyphs, GlyphRef{wx, wy, 0, 0, ' ', 0, false})) {
           oom = true;
           break;
         }
@@ -286,7 +288,7 @@ void WordSelectionScan::initFromPage(const Page& page) {
                (static_cast<unsigned char>(word[b + 2]) & 0x3F) << 6 | (static_cast<unsigned char>(word[b + 3]) & 0x3F);
           b += 4;
         }
-        if (!pushGlyphSafe(allGlyphs, GlyphRef{0, 0, 0, 0, cp, 0, false})) {
+        if (!pushGlyphSafe(allGlyphs, GlyphRef{wx, wy, 0, 0, cp, 0, false})) {
           oom = true;
           break;
         }

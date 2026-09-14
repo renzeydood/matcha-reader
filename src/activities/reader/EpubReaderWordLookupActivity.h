@@ -1,11 +1,12 @@
 #pragma once
 
+#include <Epub/Page.h>
 #include <Epub/VerticalParsedText.h>
 #include <GfxRenderer.h>
 
 struct Rect;
-class Page;
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -22,11 +23,11 @@ class EpubReaderWordLookupActivity final : public Activity {
   // Vertical (tategaki) reading mode.
   explicit EpubReaderWordLookupActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                         const VerticalPage& page, std::string scanCachePath = "",
-                                        uint16_t spineIndex = 0, uint16_t pageIndex = 0);
+                                        uint16_t spineIndex = 0, uint16_t pageIndex = 0, int readerFontId = 0);
   // Horizontal (yokogaki) reading mode.
   explicit EpubReaderWordLookupActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const Page& page,
-                                        std::string scanCachePath = "", uint16_t spineIndex = 0,
-                                        uint16_t pageIndex = 0);
+                                        std::string scanCachePath = "", uint16_t spineIndex = 0, uint16_t pageIndex = 0,
+                                        int readerFontId = 0);
 
   void onEnter() override;
   void onExit() override;
@@ -75,6 +76,7 @@ class EpubReaderWordLookupActivity final : public Activity {
   // so a fragmented first open self-heals instead of the user having to reopen via the menu.
   bool stepScan(uint32_t budgetMs);
   bool scanHealAttempted = false;
+  int findSelectableWordAt(int tx, int ty) const;
   void moveCursor(int delta);
   void performLookup();
   void performLookupImpl();
@@ -87,5 +89,20 @@ class EpubReaderWordLookupActivity final : public Activity {
   int fastRefreshCount = 0;
   static constexpr int kFullRefreshInterval = 10;
 
+  const VerticalPage* vpage = nullptr;
+  std::shared_ptr<Page> hpage;
+  int fontId = 0;
+
+  struct WordRect {
+    int x = 0;
+    int y = 0;
+    int w = 0;
+    int h = 0;
+    bool valid = false;
+  };
+
+  WordRect getWordBoundingBox(size_t selectIdx) const;
+  void drawWordHighlights();
+  void renderFloatingPanel(const Rect& screen);
   void renderContentArea(const Rect& screen, int contentTop);
 };

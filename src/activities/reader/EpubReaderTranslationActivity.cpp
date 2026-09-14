@@ -345,7 +345,7 @@ void EpubReaderTranslationActivity::onWifiComplete(bool success) {
 }
 
 void EpubReaderTranslationActivity::loop() {
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back) || mappedInput.wasBackGesture()) {
     ActivityResult result;
     result.isCancelled = true;
     setResult(std::move(result));
@@ -353,19 +353,71 @@ void EpubReaderTranslationActivity::loop() {
     return;
   }
 
+  // Touch swipe handling
+  const auto swipe = mappedInput.wasSwipe();
+  if (swipe == MappedInputManager::SwipeDir::Down) {
+    if (state == SHOWING_RESULT && scrollOffset < maxScrollOffset) {
+      scrollOffset = std::min(maxScrollOffset, scrollOffset + 3);
+      requestUpdate();
+    }
+    return;
+  } else if (swipe == MappedInputManager::SwipeDir::Up) {
+    if (state == SHOWING_RESULT && scrollOffset > 0) {
+      scrollOffset = std::max(0, scrollOffset - 3);
+      requestUpdate();
+    }
+    return;
+  }
+
+  // Touch tap handling
+  int tx = 0, ty = 0;
+  if (mappedInput.wasScreenTapped(tx, ty)) {
+    auto& theme = UITheme::getInstance();
+    auto metrics = theme.getMetrics();
+    Rect screen = theme.getScreenSafeArea(renderer, true, false);
+    const int contentTop = screen.y + metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+
+    if (ty < contentTop) {
+      ActivityResult result;
+      result.isCancelled = true;
+      setResult(std::move(result));
+      finish();
+      return;
+    }
+
+    if (state == SHOWING_RESULT) {
+      if (ty < screen.y + screen.height / 2) {
+        if (scrollOffset > 0) {
+          scrollOffset = std::max(0, scrollOffset - 3);
+          requestUpdate();
+        }
+      } else {
+        if (scrollOffset < maxScrollOffset) {
+          scrollOffset = std::min(maxScrollOffset, scrollOffset + 3);
+          requestUpdate();
+        }
+      }
+      return;
+    }
+  }
+
   if (state == SHOWING_RESULT) {
-    buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Down}, [this] {
-      if (scrollOffset < maxScrollOffset) {
-        scrollOffset++;
-        requestUpdate();
-      }
-    });
-    buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Up}, [this] {
-      if (scrollOffset > 0) {
-        scrollOffset--;
-        requestUpdate();
-      }
-    });
+    buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Down, MappedInputManager::Button::NavNext,
+                                          MappedInputManager::Button::PageForward},
+                                         [this] {
+                                           if (scrollOffset < maxScrollOffset) {
+                                             scrollOffset++;
+                                             requestUpdate();
+                                           }
+                                         });
+    buttonNavigator.onPressAndContinuous(
+        {MappedInputManager::Button::Up, MappedInputManager::Button::NavPrevious, MappedInputManager::Button::PageBack},
+        [this] {
+          if (scrollOffset > 0) {
+            scrollOffset--;
+            requestUpdate();
+          }
+        });
   }
 }
 

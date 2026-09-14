@@ -296,7 +296,7 @@ void MangaWordLookupActivity::performLookupImpl() {
 }
 
 void MangaWordLookupActivity::loop() {
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back) ||
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back) || mappedInput.wasBackGesture() ||
       ReaderUtils::powerClickLeavesWordLookup(mappedInput)) {
     ActivityResult result;
     result.isCancelled = true;
@@ -305,13 +305,76 @@ void MangaWordLookupActivity::loop() {
     return;
   }
 
+  // Touch swipe handling
+  const auto swipe = mappedInput.wasSwipe();
+  if (swipe == MappedInputManager::SwipeDir::Left) {
+    moveCursor(1);
+    return;
+  } else if (swipe == MappedInputManager::SwipeDir::Right) {
+    moveCursor(-1);
+    return;
+  } else if (swipe == MappedInputManager::SwipeDir::Down) {
+    if (hasResult && scrollOffset < maxScroll) {
+      scrollOffset = std::min(maxScroll, scrollOffset + 3);
+      requestUpdate();
+    }
+    return;
+  } else if (swipe == MappedInputManager::SwipeDir::Up) {
+    if (scrollOffset > 0) {
+      scrollOffset = std::max(0, scrollOffset - 3);
+      requestUpdate();
+    }
+    return;
+  }
+
+  // Touch tap handling
+  int tx = 0, ty = 0;
+  if (mappedInput.wasScreenTapped(tx, ty)) {
+    auto& theme = UITheme::getInstance();
+    auto metrics = theme.getMetrics();
+    Rect screen = theme.getScreenSafeArea(renderer, true, false);
+    const int contentTop = screen.y + metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+
+    // Header / top area tap closes activity
+    if (ty < contentTop) {
+      ActivityResult result;
+      result.isCancelled = true;
+      setResult(std::move(result));
+      finish();
+      return;
+    }
+
+    // Side navigation or definition scrolling
+    if (tx < screen.x + screen.width * 0.3) {
+      moveCursor(-1);
+      return;
+    } else if (tx > screen.x + screen.width * 0.7) {
+      moveCursor(1);
+      return;
+    } else {
+      // Tap middle area -> scroll upper/lower half
+      if (ty < screen.y + screen.height / 2) {
+        if (scrollOffset > 0) {
+          scrollOffset = std::max(0, scrollOffset - 3);
+          requestUpdate();
+        }
+      } else {
+        if (hasResult && scrollOffset < maxScroll) {
+          scrollOffset = std::min(maxScroll, scrollOffset + 3);
+          requestUpdate();
+        }
+      }
+      return;
+    }
+  }
+
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     performLookup();
     return;
   }
 
-  const bool sideButtonsForLookup =
-      SETTINGS.wordLookupSideButtons != 0 && SETTINGS.sideButtonLayout != CrossPointSettings::SIDE_BUTTONS_DISABLED;
+  const bool sideButtonsForLookup = (SETTINGS.wordLookupSideButtons != 0 || mappedInput.hasTouch()) &&
+                                    SETTINGS.sideButtonLayout != CrossPointSettings::SIDE_BUTTONS_DISABLED;
   const bool swapFrontButtons = mappedInput.isNavDirectionSwapped();
   const auto nextEntryButton =
       sideButtonsForLookup ? MappedInputManager::Button::PageForward : MappedInputManager::Button::Right;
@@ -323,8 +386,10 @@ void MangaWordLookupActivity::loop() {
   const auto scrollUpButton =
       sideButtonsForLookup ? (swapFrontButtons ? MappedInputManager::Button::Right : MappedInputManager::Button::Left)
                            : MappedInputManager::Button::Up;
-  buttonNavigator.onPressAndContinuous({nextEntryButton}, [this] { moveCursor(1); });
-  buttonNavigator.onPressAndContinuous({previousEntryButton}, [this] { moveCursor(-1); });
+  buttonNavigator.onPressAndContinuous({nextEntryButton, MappedInputManager::Button::NavNext},
+                                       [this] { moveCursor(1); });
+  buttonNavigator.onPressAndContinuous({previousEntryButton, MappedInputManager::Button::NavPrevious},
+                                       [this] { moveCursor(-1); });
   buttonNavigator.onPressAndContinuous({scrollDownButton}, [this] {
     if (hasResult && scrollOffset < maxScroll) {
       scrollOffset = std::min(maxScroll, scrollOffset + 5);

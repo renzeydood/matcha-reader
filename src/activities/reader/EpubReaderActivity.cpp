@@ -3738,9 +3738,9 @@ void EpubReaderActivity::openWordLookupPanel() {
     {
       RenderLock lock(*this);
       if (const VerticalPage* page = verticalSection->getPage()) {
-        panel = makeUniqueNoThrow<EpubReaderWordLookupActivity>(renderer, mappedInput, *page, scanCachePath,
-                                                                static_cast<uint16_t>(currentSpineIndex),
-                                                                static_cast<uint16_t>(verticalSection->currentPage));
+        panel = makeUniqueNoThrow<EpubReaderWordLookupActivity>(
+            renderer, mappedInput, *page, scanCachePath, static_cast<uint16_t>(currentSpineIndex),
+            static_cast<uint16_t>(verticalSection->currentPage), effectiveReaderFontId());
         if (!panel) LOG_ERR("ERS", "OOM: word lookup panel");
       }
     }
@@ -3778,7 +3778,7 @@ void EpubReaderActivity::openWordLookupPanel() {
 
       startActivityForResult(std::make_unique<EpubReaderWordLookupActivity>(
                                  renderer, mappedInput, *page, scanCachePath, static_cast<uint16_t>(currentSpineIndex),
-                                 static_cast<uint16_t>(section->currentPage)),
+                                 static_cast<uint16_t>(section->currentPage), effectiveReaderFontId()),
                              [this](const ActivityResult&) { requestUpdate(); });
     }
   }
