@@ -2,18 +2,18 @@
 
 ## Current checkpoint — 2026-09-14 (read this first)
 
-**Status: integration functionally complete and device-validated; behavior-review findings resolved and device-confirmed. Three follow-up bugs from the Vertical Text toggle are fixed and awaiting device confirmation.**
+**Status: integration functionally complete and fully device-validated. No known open defects.**
 Japanese font sizing, furigana scaling and the word-lookup/translation touch work are
 device-verified by the user. Both firmware targets build and the host suite is green
 (see the Phase 5 validation checkpoint below). The five behavior-review findings have
 been re-verified: three were real and are fixed, two were not defects (see that
 section); the two position fixes are confirmed on hardware.
-Most recent work: three bugs the user found while exercising the Vertical Text toggle
-— a stale settings row, overrides never persisting (critical), and wrong word-lookup
-highlight geometry in horizontal mode. Persistence and geometry are device-confirmed;
-the settings row needed a second fix (the row had no ON/OFF value at all), and a
-wrapped word's selection box is now split per line. See "Vertical-text toggle
-follow-up bugs" below for the outstanding device checks.
+The Vertical Text toggle follow-up work — a settings row that showed no ON/OFF state,
+overrides never persisting (critical), wrong word-lookup highlight geometry in
+horizontal mode, and a wrapped word's selection box covering whole sentences — is
+complete and device-verified as of 2026-09-15. See "Vertical-text toggle follow-up
+bugs" below.
+Local commits MATC-007 through MATC-010 are **not pushed**; push needs user approval.
 This section supersedes older progress statements below, which are retained as history.
 This log is the durable resume point after usage-limit interruptions. No build is running.
 See the latest result and task table below before consulting historical failure notes.
@@ -259,7 +259,7 @@ Settings invalidates/rebuilds the active text layout.
 | Add touch support for Manga reader | Device validated | Route configured reader tap/swipe page turns and center/menu gestures through `MangaReaderActivity` without disturbing panel prefetch, deferred grayscale upgrades or existing button behavior. X4 Pro build PASS, 84.84 s, `.cache/x4pro-audit/phase2-manga-reader-build-x4pro.log`; user device test passed |
 | Fix Japanese EPUB font-size editing | Complete, device verified | Text Settings and the reader Text panel consult the loaded Japanese companion font when the selected reader font lacks CJK coverage; the overlay font-family picker case was restored; furigana scales with the main text across 12/14/16/18 pt. User device-verified. Committed as `c18ae8ba` |
 | Add touch support for lookup/translation panels | Device validated | `EpubReaderWordLookupActivity` renders the page with `effectiveReaderFontId()` so lookup keeps the reading layout; matched words carry left-side bousen (vertical) or underlines (horizontal); tap selects, tap-again/Confirm opens `DictionaryDefinitionActivity` full screen. `EpubReaderTranslationActivity` gained swipe/half-page-tap scrolling and header-tap close. User device-verified |
-| Review merged reader and rendering behavior | Findings resolved; two device-verified | Five behavior findings re-verified against source: two were not defects (stale/overstated), three were fixed in `87e9f0c8`. The vertical-jump and vertical-toggle fixes are device-verified — they respectively restore bookmarks in Japanese books and position retention across a Vertical Text toggle. Letter-spacing fix is build-verified only. Remaining checklist items below still open |
+| Review merged reader and rendering behavior | Complete, device verified | Five behavior findings re-verified against source: two were not defects (stale/overstated), three were fixed in `87e9f0c8`. The vertical-jump and vertical-toggle fixes are device-verified — they respectively restore bookmarks in Japanese books and position retention across a Vertical Text toggle. Five follow-up bugs from device use of the Vertical Text toggle are fixed in `8b736b4d` / `c29813cb` and device-verified: settings row showed no ON/OFF, overrides never persisted (critical), horizontal lookup underline/box geometry, wrapped-word slab box. Letter-spacing fix is build-verified only. Remaining checklist items below still open |
 | Build original ESP32-C3 firmware | Complete | SUCCESS, 358.71 s; build-default.log |
 | Name X4 Pro firmware artifact | Complete | `.pio/build/x4pro/matchareader-1.6.0-x4pro.bin` produced by `pio run -e x4pro`; standard `firmware.bin` remains for upload/OTA flows |
 | Format and reconcile final documentation | Started | Formatter passed; README, USER_GUIDE §6.2/§6.3 and `docs/dictionary.md` reconciled with the shipped lookup/translation touch behavior; file-format doc audit pending |
@@ -488,6 +488,11 @@ fixes above landed. All three are fixed; none were regressions from that work.
 Validation: X4 Pro build SUCCESS (90.04 s, RAM 30.8%, Flash 94.4%); ESP32-C3 build
 SUCCESS (67.00 s, RAM 17.6%, Flash 96.4%); host suite 232/232 in 3.20 s;
 `bin/clang-format-fix -g` clean.
+
+**Device-verified 2026-09-15: all five are confirmed fixed on hardware** — the three
+above plus the two follow-ups (missing ON/OFF value, wrapped-word slab box). The user
+reports no regressions surfaced by any of them. Nothing outstanding from the Vertical
+Text toggle work.
 
 ### Matcha-added touch support plan
 
