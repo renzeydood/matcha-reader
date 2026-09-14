@@ -254,7 +254,7 @@ Settings invalidates/rebuilds the active text layout.
 | Add touch support for Manga reader | Device validated | Route configured reader tap/swipe page turns and center/menu gestures through `MangaReaderActivity` without disturbing panel prefetch, deferred grayscale upgrades or existing button behavior. X4 Pro build PASS, 84.84 s, `.cache/x4pro-audit/phase2-manga-reader-build-x4pro.log`; user device test passed |
 | Fix Japanese EPUB font-size editing | Complete, device verified | Text Settings and the reader Text panel consult the loaded Japanese companion font when the selected reader font lacks CJK coverage; the overlay font-family picker case was restored; furigana scales with the main text across 12/14/16/18 pt. User device-verified. Committed as `c18ae8ba` |
 | Add touch support for lookup/translation panels | Device validated | `EpubReaderWordLookupActivity` renders the page with `effectiveReaderFontId()` so lookup keeps the reading layout; matched words carry left-side bousen (vertical) or underlines (horizontal); tap selects, tap-again/Confirm opens `DictionaryDefinitionActivity` full screen. `EpubReaderTranslationActivity` gained swipe/half-page-tap scrolling and header-tap close. User device-verified |
-| Review merged reader and rendering behavior | Started; incomplete | Follow reader/cache checklist below |
+| Review merged reader and rendering behavior | Findings resolved; two device-verified | Five behavior findings re-verified against source: two were not defects (stale/overstated), three were fixed in `87e9f0c8`. The vertical-jump and vertical-toggle fixes are device-verified — they respectively restore bookmarks in Japanese books and position retention across a Vertical Text toggle. Letter-spacing fix is build-verified only. Remaining checklist items below still open |
 | Build original ESP32-C3 firmware | Complete | SUCCESS, 358.71 s; build-default.log |
 | Name X4 Pro firmware artifact | Complete | `.pio/build/x4pro/matchareader-1.6.0-x4pro.bin` produced by `pio run -e x4pro`; standard `firmware.bin` remains for upload/OTA flows |
 | Format and reconcile final documentation | Started | Formatter passed; README, USER_GUIDE §6.2/§6.3 and `docs/dictionary.md` reconciled with the shipped lookup/translation touch behavior; file-format doc audit pending |
@@ -342,11 +342,17 @@ on the log's word. Two did not survive inspection; three were real and are now f
   whichever engine is active and drops both engines on a cross-spine jump; the
   vertical builder now consumes `pendingOffsetJump`, which (unlike
   `cachedVisibleTextOffset`) stays valid across spines.
+  User-visible symptom: **bookmarks did not work in Japanese books** — opening one
+  left the reader on the current chapter. `EpubReaderBookmarksActivity` feeds the
+  same `progressChangeResultHandler` as KOSync, so bookmarks travelled the same
+  broken branch. Device-verified fixed.
 - **Offset cleared before use.** Horizontal section-cache loading reset
   `cachedVisibleTextOffset` before the `offsetJump` expression read it, so the
   fallback was always `nullopt` on a cache hit and the position fell back to a
   page number numbered in the other layout. The anchor is now captured into
   `carriedOffset` before the reset.
+  User-visible symptom: **toggling Vertical Text lost the reading position** over an
+  already-cached chapter. Device-verified fixed.
 - **Missing letter spacing.** The greedy-breaking and natural-gap `getSpaceAdvance`
   calls in `ParsedText` now pass `blockStyle.letterSpacing`, matching the render
   paths and every sibling call.
@@ -369,12 +375,22 @@ on the log's word. Two did not survive inspection; three were real and are now f
 Still unverified (unchanged): toolbar More actions on image-only pages,
 allocation-failure paths, and grayscale/SD-memory lifecycle.
 
-**Device checks for the three fixes** (none are covered by the host suite): in a
-vertical Japanese book, use reader menu → change progress and a KOSync pull to jump
-both within the current chapter and to a different chapter, confirming the landing
-position each time; then toggle Vertical Text off and on over an already-cached
-chapter and confirm the position holds. The letter-spacing fix needs a book with CSS
-`letter-spacing` on justified text.
+**Device verification (2026-09-14): the two position fixes are confirmed on hardware.**
+Both had user-visible symptoms that predated this work: bookmarks did not jump in
+Japanese books, and toggling Vertical Text lost the reading position. Both now behave
+correctly on device.
+
+KOSync is **not** required to exercise either fix. `EpubReaderBookmarksActivity`
+builds the same `ProgressChangeResult` and is routed through the same
+`progressChangeResultHandler`, so opening a bookmark covers the visible-offset
+branch — mid-chapter for the same-spine case, a different chapter for the cross-spine
+case (the one that was broken). The Vertical Text toggle covers the cache-load fix
+and touches no sync code at all.
+
+The letter-spacing fix remains source-reasoned and build-verified only; it needs a
+book with CSS `letter-spacing` on justified text, which is uncommon. Low risk — the
+change aligns two calls with the three sibling call sites that already passed the
+argument.
 
 ### Matcha-added touch support plan
 
