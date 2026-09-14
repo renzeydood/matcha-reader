@@ -36,6 +36,8 @@ One word on the page becomes highlighted:
 2. Press **Confirm** to look up the highlighted word.
 3. Press **Back** to return to the reader.
 
+On touch devices you can also tap a word directly to select and look it up, and swipe back to return to the reader.
+
 On the very first lookup with a dictionary (and again whenever the `.idx` or `.syn` source file changes), the reader shows *"Indexing dictionary…"* while it builds small sidecar files next to them — a `.qidx` for the word index, and a `.sidx` when a `.syn` synonym file is present. Each sidecar is rebuilt independently, only when its own source changes. This takes a few seconds for large dictionaries and makes all subsequent lookups fast. The sidecars can be deleted safely at any time — they will simply be rebuilt.
 
 ### How Lookup Works
@@ -53,6 +55,9 @@ HTML dictionaries that declare `sametypesequence=h` use the EPUB text-layout eng
 
 - **Left/Right** or side **Up/Down** — previous / next page
 - **Back** — return to word selection
+
+On touch devices, tapping the left third of the screen goes to the previous page and tapping anywhere else goes to
+the next, matching the reader's own page-turn zones. The left-edge back swipe returns to word selection.
 
 
 

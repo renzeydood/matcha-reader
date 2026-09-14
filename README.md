@@ -1,6 +1,6 @@
 # Matcha Reader, a Japanese learning fork of CrossPoint
 
-> **X4 Pro development:** integration with current CrossPoint is in progress on `MATC-001-marge-crosspoint-1.6.0`. The first X4 Pro smoke test has passed; remaining touch follow-up and validation are tracked in the [integration log](docs/x4pro-merge-resolution-log.md).
+> **X4 Pro development:** integration with current CrossPoint is in progress on `MATC-001-marge-crosspoint-1.6.0`. The first X4 Pro smoke test has passed, and touch support now covers the Library, reading statistics, manga lists, the manga reader, word lookup and page translation. Remaining validation is tracked in the [integration log](docs/x4pro-merge-resolution-log.md).
 
 The experimental X4 Pro integration adds CrossPoint's touch reader toolbar while retaining Matcha's Japanese reading controls under **Reader Settings**. Build checks, smoke-test results and remaining touch work are tracked separately in the integration log.
 
@@ -46,6 +46,8 @@ Japanese books are detected from their metadata and set vertically: right-to-lef
 
 Look up any word on the page, vertically or horizontally. Conjugations resolve to the dictionary form on their own (読んで becomes 読む, 食べませんでした becomes 食べる), and the page is scanned first so you only land on words that actually have an entry.
 
+Lookup keeps the page exactly as you were reading it — same font, same size, same line breaks. Every word the dictionary can match is marked, with a side-line (傍線) down the left of the column in vertical text so it stays clear of the furigana, and an underline in horizontal text. The current word is boxed; **Confirm** opens its entry full screen. On touch devices you can tap a marked word to select it and tap it again to open the entry.
+
 Vocabulary, names and grammar each come from their own dictionary. If the book itself annotated a reading, the entry opens with "In this book: はやし" and remembers it for the rest of the book. See [Setup](#setup) for the files, and [§6.2](USER_GUIDE.md#62-word-lookup) for how to drive it.
 
 Reader Settings includes **Word Lookup Font Size** (Tiny, Small, Medium or Large) for adjusting dictionary entry text.
@@ -54,7 +56,7 @@ Reader Settings includes **Word Lookup Font Size** (Tiny, Small, Medium or Large
 
 ### Page translation
 
-Translates the current page to English with Gemini. Works in any book, not only Japanese ones. Needs Wi-Fi and your own API key.
+Translates the current page to English with Gemini. Works in any book, not only Japanese ones. Needs Wi-Fi and your own API key. On touch devices, swipe or tap the upper and lower halves of the page to scroll, and tap the header to close.
 
 <p align="center"><img src="docs/images/screenshots/translate-page.png" width="260" alt="A translated page"></p>
 

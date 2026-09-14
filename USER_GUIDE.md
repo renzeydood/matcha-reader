@@ -727,21 +727,39 @@ toggle in place without leaving the menu, and both are remembered per book.
 
 ### 6.2 Word Lookup
 
-Reader menu → **Word Lookup**.
+Reader menu → **Word Lookup**, or hold **Confirm** when **Settings → Controls → Long-press Menu** is set to
+**Dictionary**.
+
+The page keeps the layout you were reading — same font, same size, same line breaks. The only thing that changes is
+that every word the dictionary can match is marked, and one of them is boxed as the current selection:
+
+* **Vertical (Japanese) text** — a side-line (傍線) runs down the **left** edge of each matched word, clear of the
+  furigana on the right.
+* **Horizontal text** — each matched word is underlined.
+
+Move to the word you want, then press **Confirm** to open its entry full screen.
 
 | Button | Action |
 | --- | --- |
 | Left / Right | Move between matched words on the page |
-| Up / Down | Scroll a long definition |
+| Up / Down (side) | Move between matched words, on touch devices or when **Navigate with Side Buttons in Word Lookup** is on |
+| Confirm | Open the selected word's definition, full screen |
 | Back | Return to reading |
 | Power (short click) | Go back, same as Back, when **Short power button click** is set to **Word Lookup** |
+
+On the definition screen, **Left / Right** or the side buttons page through a long entry, and **Back** returns to
+word selection.
+
+On touch devices, tap a marked word to select and look it up, and tap the selected word again to open its
+definition full screen. Tapping the left or right edge of the screen steps to the previous or next match, a swipe
+left or right does the same, and the back swipe returns to reading.
 
 The header counts your position (e.g. 10/35). The page is pre-scanned, so you only ever land on a word the
 dictionary actually has.
 
-Enable **Settings → Controls → Navigate with Side Buttons in Word Lookup** to use the side buttons for moving
-between words and the front Left / Right buttons for scrolling. The default mapping above remains active when
-**Side Button Layout** is set to **Disabled**.
+By default the front **Left / Right** buttons move between matched words. Enable **Settings → Controls → Navigate
+with Side Buttons in Word Lookup** to move with the side buttons instead; touch devices already do this without the
+setting. Either way the mapping falls back to the front buttons when **Side Button Layout** is set to **Disabled**.
 
 In Reader Settings, **Word Lookup Font Size** offers Tiny, Small (default), Medium, and Large definition text.
 
@@ -755,6 +773,9 @@ Lookup** (the other settings keep the click for sleep, page turns, refresh or fo
 
 Reader menu → **Translate Page**, then wait for "Translating…". Up/Down scrolls, Back returns. Needs Wi-Fi and a
 Gemini API key in `/system/gemini.key`.
+
+On touch devices, swipe up or down to scroll, or tap the upper or lower half of the page to scroll a few lines at a
+time. Tapping the header closes the translation, as does the back swipe.
 
 ### 6.4 Reading Manga
 
