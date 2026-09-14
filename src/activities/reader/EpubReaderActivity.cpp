@@ -1093,8 +1093,10 @@ void EpubReaderActivity::openReaderMenu() {
 // the book's current effective state.
 void EpubReaderActivity::applyVerticalFuriganaOverride(const int8_t verticalOverrideIn,
                                                        const int8_t furiganaOverrideIn) {
+  bool overrideChanged = false;
   if (verticalOverrideIn >= 0 && verticalOverrideIn != (useVerticalText() ? 1 : 0)) {
     verticalOverride = verticalOverrideIn;
+    overrideChanged = true;
     {
       // Every other section reset in this file takes the render lock: the render task can
       // still be inside its (multi-second, section-touching) warm tail when this result
@@ -1122,6 +1124,9 @@ void EpubReaderActivity::applyVerticalFuriganaOverride(const int8_t verticalOver
         cachedChapterTotalPageCount = section->estimatedTotalPages();
         cachedVisibleTextOffset = section->getVisibleTextOffsetForPage(static_cast<uint16_t>(section->currentPage));
       }
+      // Persist BEFORE the sections go: saveProgress() reads the visible-text offset off the
+      // live section, so saving after the reset would drop the anchor from progress.bin.
+      persistOverrideChange();
       section.reset();
       verticalSection.reset();
     }
@@ -1131,8 +1136,36 @@ void EpubReaderActivity::applyVerticalFuriganaOverride(const int8_t verticalOver
   }
   if (furiganaOverrideIn >= 0 && furiganaOverrideIn != (useFurigana() ? 1 : 0)) {
     furiganaOverride = furiganaOverrideIn;
+    // A furigana-only change leaves the sections alone, so nothing else here would write it.
+    if (!overrideChanged) {
+      RenderLock lock(*this);
+      persistOverrideChange();
+    }
   }
   requestUpdate();
+}
+
+// Writes the vertical/furigana overrides to progress.bin the moment the user changes them.
+//
+// These are user decisions, not derived state, so their durability must not depend on a later
+// render happening to notice that the position moved: the render-path saves are deliberately
+// gated on spine/page/pageCount, none of which an override changes, and onExit() does not save
+// progress at all. A toggle followed by sleep, or by closing the book from the menu, therefore
+// left the old value on disk and the book reopened in the previous mode.
+//
+// Must be called with the render lock held and BEFORE any section reset, so the current page's
+// visible-text offset is still readable and gets stored alongside the flags.
+void EpubReaderActivity::persistOverrideChange() {
+  const int page = verticalSection ? verticalSection->currentPage : section ? section->currentPage : nextPageNumber;
+  const int pageCount = verticalSection ? verticalSection->pageCount
+                        : section       ? section->estimatedTotalPages()
+                                        : cachedChapterTotalPageCount;
+  if (saveProgress(currentSpineIndex, std::max(0, page), std::max(0, pageCount), verticalOverride, furiganaOverride)) {
+    // Keep the render-path guard in step, or the next render rewrites the same record.
+    lastSavedSpineIndex = currentSpineIndex;
+    lastSavedPage = std::max(0, page);
+    lastSavedPageCount = std::max(0, pageCount);
+  }
 }
 
 void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action) {
@@ -2578,15 +2611,6 @@ void EpubReaderActivity::renderBook() {
     lastRenderCompleteMs = millis();
   }
   runPostRenderTail(viewportWidth, viewportHeight, /*vertical=*/false, orientedMarginLeft, orientedMarginTop);
-
-  if (currentSpineIndex != lastSavedSpineIndex || section->currentPage != lastSavedPage ||
-      section->pageCount != lastSavedPageCount) {
-    if (saveProgress(currentSpineIndex, section->currentPage, section->estimatedTotalPages())) {
-      lastSavedSpineIndex = currentSpineIndex;
-      lastSavedPage = section->currentPage;
-      lastSavedPageCount = section->estimatedTotalPages();
-    }
-  }
 
   showPendingSyncSaveError();
 

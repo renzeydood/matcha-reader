@@ -349,6 +349,9 @@ class GfxRenderer {
   bool getGlyphMetrics(int fontId, uint32_t cp, EpdFontFamily::Style style, int* left, int* width, int* top,
                        int* height) const;
   int getFontAscenderSize(int fontId) const;
+  /// Maximal glyph extent BELOW the baseline. Negative, matching EpdFontData::descender, so a
+  /// glyph box is `ascender - descender` tall.
+  int getFontDescenderSize(int fontId) const;
   int getLineHeight(int fontId) const;
   int getLineHeightScaled(int fontId, uint16_t scale) const;
   int getLineHeight(int fontId, float compression) const;

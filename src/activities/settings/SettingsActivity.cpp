@@ -380,12 +380,16 @@ void SettingsActivity::toggleCurrentSetting() {
     SETTINGS.*(setting.valuePtr) = !currentValue;
   } else if (setting.type == SettingType::TOGGLE && setting.valueGetter && setting.valueSetter) {
     // Backed by state outside CrossPointSettings (SettingInfo::DynamicToggle) -- e.g. the
-    // per-book Vertical Text / Furigana overrides. Returns immediately instead of falling
-    // through to the shared tail below: that tail's saveSettings()/rebuildSettingsLists() is
-    // for CrossPointSettings changes, and this state isn't part of that singleton -- the
-    // caller reads it back from this screen's finish() result instead. Falling through would
-    // write the settings file on every toggle for no reason.
+    // per-book Vertical Text / Furigana overrides. Skips the shared tail's saveSettings(): this
+    // state isn't part of that singleton (the caller reads it back from finish()), so saving
+    // would write the settings file on every toggle for no reason. The list rebuild IS needed --
+    // it is what repaints the row's value, and without it the row keeps showing the old state
+    // until the screen is left.
     setting.valueSetter(setting.valueGetter() == 0 ? 1 : 0);
+    const int selected = ringPos();
+    rebuildSettingsLists();
+    activeNav().selected = std::min(selected, settingsCount);
+    requestUpdate();
     return;
   } else if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
     const uint8_t currentValue = SETTINGS.*(setting.valuePtr);

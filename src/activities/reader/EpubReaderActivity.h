@@ -445,6 +445,7 @@ class EpubReaderActivity final : public ReaderActivity {
   bool isJapaneseBook() const;
   bool showVerticalToggle() const;
   void applyVerticalFuriganaOverride(int8_t verticalOverrideIn, int8_t furiganaOverrideIn);
+  void persistOverrideChange();
 
   void applyOrientation(uint8_t orientation);
   void applyInitialOrientation() override;

@@ -2,10 +2,12 @@
 
 #include <Arduino.h>
 #include <DictIndex.h>
+#include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <Logging.h>
 #include <WordLookup.h>
 
+#include <algorithm>
 #include <cstring>
 
 #include "Epub/Kinsoku.h"
@@ -237,7 +239,7 @@ void WordSelectionScan::initFromVerticalPage(const VerticalPage& page) {
   // with guarded doubling instead.
 }
 
-void WordSelectionScan::initFromPage(const Page& page) {
+void WordSelectionScan::initFromPage(const Page& page, const GfxRenderer& renderer, const int baseFontId) {
   reset();
   // Horizontal mode: flatten the page's lines into one continuous character
   // stream (single paragraph). Latin words keep their separating spaces; CJK
@@ -253,18 +255,31 @@ void WordSelectionScan::initFromPage(const Page& page) {
     const auto& line = static_cast<const PageLine&>(*el);
     if (!line.getBlock()) continue;
     const TextBlock& block = *line.getBlock();
+    // A block with a CSS font-size draws with its own id, the one it was measured with.
+    const int blockFontId = block.getBlockStyle().resolveFontId(baseFontId);
     for (uint16_t wi = 0; wi < block.wordCount(); wi++) {
       if (oom) break;
       // The arena stores words as NUL-terminated spans, not std::strings (upstream 1.5.0).
       // Braces, not parens: Arduino.h defines a function-like `word(...)` macro.
       const std::string_view word{block.wordText(wi), block.wordTextLen(wi)};
       if (word.empty()) continue;
-      const uint16_t wx = static_cast<uint16_t>(line.xPos + block.wordXpos(wi));
-      const uint16_t wy = static_cast<uint16_t>(line.yPos);
+      const int wordFontId = block.wordFont(wi) != 0 ? block.wordFont(wi) : blockFontId;
+      const EpdFontFamily::Style style = block.wordStyle(wi);
+      const int ascender = renderer.getFontAscenderSize(wordFontId);
+      // TextBlock::render() shifts every word down by this much to clear the ruby annotation
+      // above it, so line.yPos is the top of the RESERVED box, not of the text. Recording the
+      // unshifted value would put highlights on the furigana instead of the word.
+      const int rubyShift = block.getRubyShift(ascender);
+      const uint16_t wy = static_cast<uint16_t>(line.yPos + rubyShift);
+      const auto boxH = static_cast<uint16_t>(std::max(1, ascender - renderer.getFontDescenderSize(wordFontId)));
+      // Character x advances within the word: a TextBlock stores ONE x per word, so every
+      // character has to be walked to get its own box. Without this the highlight and the
+      // selection frame collapse onto the width of a single character at the word's origin.
+      int penX = line.xPos + block.wordXpos(wi);
       // Insert a separating space only between two ASCII-word boundaries.
       if (lastCp && isAsciiWord(static_cast<unsigned char>(lastCp)) &&
           isAsciiWord(static_cast<unsigned char>(word[0]))) {
-        if (!pushGlyphSafe(allGlyphs, GlyphRef{wx, wy, 0, 0, ' ', 0, false})) {
+        if (!pushGlyphSafe(allGlyphs, GlyphRef{static_cast<uint16_t>(penX), wy, 0, boxH, ' ', 0, false})) {
           oom = true;
           break;
         }
@@ -272,6 +287,7 @@ void WordSelectionScan::initFromPage(const Page& page) {
       size_t b = 0;
       while (b < word.size()) {
         auto c0 = static_cast<unsigned char>(word[b]);
+        const size_t charStart = b;
         uint32_t cp;
         if (c0 < 0x80) {
           cp = c0;
@@ -288,10 +304,18 @@ void WordSelectionScan::initFromPage(const Page& page) {
                (static_cast<unsigned char>(word[b + 2]) & 0x3F) << 6 | (static_cast<unsigned char>(word[b + 3]) & 0x3F);
           b += 4;
         }
-        if (!pushGlyphSafe(allGlyphs, GlyphRef{wx, wy, 0, 0, cp, 0, false})) {
+        char utf8[5];
+        const size_t charLen = b - charStart;
+        memcpy(utf8, word.data() + charStart, charLen);
+        utf8[charLen] = '\0';
+        int advance = renderer.getTextAdvanceX(wordFontId, utf8, style);
+        if (advance <= 0) advance = boxH;
+        if (!pushGlyphSafe(allGlyphs, GlyphRef{static_cast<uint16_t>(penX), wy, static_cast<uint16_t>(advance), boxH,
+                                               cp, 0, false})) {
           oom = true;
           break;
         }
+        penX += advance;
         lastCp = cp;
       }
     }

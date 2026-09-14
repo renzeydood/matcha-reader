@@ -53,7 +53,7 @@ EpubReaderWordLookupActivity::EpubReaderWordLookupActivity(GfxRenderer& renderer
   fontId = (readerFontId != 0) ? readerFontId : SETTINGS.getReaderFontId();
   hpage = std::make_shared<Page>(page);
   reclaimFontHeap();  // BEFORE building the scan -- see reclaimFontHeap()
-  scan.initFromPage(page);
+  scan.initFromPage(page, renderer, fontId);
   initScanFromCacheOrBurst("horizontal");
 }
 
@@ -648,22 +648,20 @@ EpubReaderWordLookupActivity::WordRect EpubReaderWordLookupActivity::getWordBoun
       if (cellY + cellPx > maxY) maxY = cellY + cellPx;
     }
   } else if (hpage) {
-    const int lineH = renderer.getLineHeight(fontId);
     for (size_t c = 0; c < numChars && (allStart + c) < scan.allGlyphs.size(); c++) {
       const auto& glyph = scan.allGlyphs[allStart + c];
       if (glyph.x == 0 && glyph.y == 0) continue;
-      int cellX = glyph.x + marginLeft;
-      int cellY = glyph.y + marginTop;
-
-      std::string utf8Char;
-      WordSelectionScan::encodeUtf8(glyph.codepoint, utf8Char);
-      int charW = renderer.getTextAdvanceX(fontId, utf8Char.c_str(), EpdFontFamily::REGULAR);
-      if (charW <= 0) charW = lineH;
+      const int cellX = glyph.x + marginLeft;
+      const int cellY = glyph.y + marginTop;
+      // Advance and box height were measured during the scan with this glyph's own word font
+      // and style; re-measuring here with the base font would drift on styled or sized runs.
+      const int charW = glyph.column > 0 ? glyph.column : glyph.row;
+      const int charH = glyph.row;
 
       if (cellX < minX) minX = cellX;
       if (cellY < minY) minY = cellY;
       if (cellX + charW > maxX) maxX = cellX + charW;
-      if (cellY + lineH > maxY) maxY = cellY + lineH;
+      if (cellY + charH > maxY) maxY = cellY + charH;
     }
   }
 

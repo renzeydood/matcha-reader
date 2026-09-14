@@ -8,6 +8,7 @@
 #include <vector>
 
 class Page;
+class GfxRenderer;
 
 // The Word Lookup page pre-scan, extracted from EpubReaderWordLookupActivity into a RESUMABLE
 // state machine so EpubReaderActivity can run it in small slices during idle loop() ticks while
@@ -23,11 +24,15 @@ class Page;
 // (progressive Word Lookup open) without entries later disappearing under the cursor.
 class WordSelectionScan {
  public:
+  // column/row carry the vertical grid position in tategaki mode. Horizontal has no grid, so
+  // they instead carry this glyph's drawn advance and box height -- measured once during the
+  // scan, where the per-word font and style are still known. Reusing the two fields keeps
+  // GlyphRef at 20 bytes; a dense page holds thousands of these.
   struct GlyphRef {
     uint16_t x;
     uint16_t y;
-    uint16_t column;
-    uint16_t row;
+    uint16_t column;  // horizontal: advance width in px
+    uint16_t row;     // horizontal: glyph box height in px
     uint32_t codepoint;
     uint32_t paragraphIndex;
     bool rotated;
@@ -36,7 +41,9 @@ class WordSelectionScan {
   // Populate allGlyphs from a page and reset the state machine. Vertical (tategaki) mode.
   void initFromVerticalPage(const VerticalPage& page);
   // Horizontal (yokogaki) mode: flattens the page's lines into one continuous character stream.
-  void initFromPage(const Page& page);
+  // Needs the renderer and the reader's base font to record true per-character geometry: a
+  // TextBlock stores one x per WORD, so character boxes have to be measured here.
+  void initFromPage(const Page& page, const GfxRenderer& renderer, int baseFontId);
   // Manga mode: a plain UTF-8 text blob (panel or combined page text). Newlines are dropped.
   void initFromUtf8Text(const std::string& text);
 

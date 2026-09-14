@@ -2,13 +2,16 @@
 
 ## Current checkpoint — 2026-09-14 (read this first)
 
-**Status: integration functionally complete and device-validated; behavior-review findings resolved, device confirmation pending.**
+**Status: integration functionally complete and device-validated; behavior-review findings resolved and device-confirmed. Three follow-up bugs from the Vertical Text toggle are fixed and awaiting device confirmation.**
 Japanese font sizing, furigana scaling and the word-lookup/translation touch work are
 device-verified by the user. Both firmware targets build and the host suite is green
 (see the Phase 5 validation checkpoint below). The five behavior-review findings have
 been re-verified: three were real and are fixed, two were not defects (see that
-section). The three fixes are position-related and are **not covered by the host
-suite** — they need the device checks listed there.
+section); the two position fixes are confirmed on hardware.
+Most recent work: three bugs the user found while exercising the Vertical Text toggle
+— a stale settings row, overrides never persisting (critical), and wrong word-lookup
+highlight geometry in horizontal mode. All fixed and build/test-validated; see
+"Vertical-text toggle follow-up bugs" below for the device checks they need.
 This section supersedes older progress statements below, which are retained as history.
 This log is the durable resume point after usage-limit interruptions. No build is running.
 See the latest result and task table below before consulting historical failure notes.
@@ -391,6 +394,76 @@ The letter-spacing fix remains source-reasoned and build-verified only; it needs
 book with CSS `letter-spacing` on justified text, which is uncommon. Low risk — the
 change aligns two calls with the three sibling call sites that already passed the
 argument.
+
+### Vertical-text toggle follow-up bugs — fixed 2026-09-14
+
+Found by the user while exercising the Vertical Text toggle after the position
+fixes above landed. All three are fixed; none were regressions from that work.
+
+- **Settings row did not repaint after toggling.** The `DynamicToggle` branch in
+  `SettingsActivity::onConfirm` returned early to skip `saveSettings()` — the
+  override is book-scoped, not a global setting — but that early return also
+  skipped `rebuildSettingsLists()`, which is what regenerates the row's value
+  text. The row kept reading "Vertical" until the user left and re-entered the
+  menu. The branch now rebuilds the lists (preserving `activeNav().selected`
+  across the rebuild) and requests an update, still without `saveSettings()`.
+
+- **Vertical never stuck; horizontal was permanent.** *(critical)* The
+  vertical/furigana overrides live in `progress.bin` bytes 6 and 7, and their only
+  write path was the render-path save — which is gated on `currentSpineIndex`,
+  `page` and `pageCount`. An override changes **none** of those, so the gate held
+  and nothing was written. `onExit()` does not save progress either (only the
+  footnote-origin special case), so a toggle followed by sleep or by closing the
+  book left the previous value on disk. The asymmetry the user saw was incidental:
+  whichever value happened to be on disk won, and that was horizontal.
+
+  `applyVerticalFuriganaOverride` now calls a new `persistOverrideChange()` the
+  moment the override changes. Ordering matters: the call must happen **inside the
+  RenderLock and before `section.reset()` / `verticalSection.reset()`**, because
+  `saveProgress` derives the visible-text anchor from the live section. Saving
+  after the reset would write a 9-byte record with no offset and destroy the anchor
+  the rebuild needs. `persistOverrideChange()` also syncs `lastSavedSpineIndex` /
+  `Page` / `PageCount` so the following render does not rewrite the same record.
+
+  Principle: *a user decision must be durable at the moment it is made*, not as a
+  side effect of a later position change.
+
+  While here, the redundant horizontal save that followed
+  `runPostRenderTail(..., vertical=false, ...)` was removed. `runPostRenderTail`
+  has no early returns, so its identical gated save always runs; the duplicate
+  additionally compared `section->pageCount` while storing
+  `section->estimatedTotalPages()`, so during partial builds its guard never
+  settled and it wrote to SD on every single render.
+
+- **Word-lookup highlight geometry wrong in horizontal mode.** Two independent
+  causes, both in `WordSelectionScan::initFromPage`:
+  - *Box collapsed / drifted in x.* Every character of a word was pushed with the
+    same x (`line.xPos + block.wordXpos(wi)`) — a `TextBlock` stores one x per
+    **word**, not per character — so the bounding box was about one character wide
+    at the word origin. The scan now walks a pen, advancing by each character's
+    measured `getTextAdvanceX` using the word's own resolved font and style.
+  - *Underline drawn through the middle of the word.* `line.yPos` is the top of the
+    **reserved** line box, which includes the furigana band; `TextBlock::render`
+    shifts words down by `getRubyShift(ascender)` when the line has ruby. Using the
+    unshifted `yPos` with `getLineHeight()` put the underline near the glyph
+    centres — which is why it only looked like a strikethrough on Japanese
+    (ruby-bearing) lines. The scan now applies the same ruby shift and sizes the box
+    as `ascender - descender`.
+
+  `GlyphRef::column` / `row` are reused in horizontal mode to carry advance width
+  and box height (they hold grid coordinates in tategaki), keeping `GlyphRef` at 20
+  bytes and adding no per-glyph allocation. Required a new
+  `GfxRenderer::getFontDescenderSize()` accessor, mirroring `getFontAscenderSize()`;
+  it returns the raw `EpdFontData::descender`, which is **negative**, hence
+  `ascender - descender` for height.
+
+  Existing `wlscan.bin` caches stay valid: `glyphContentHash()` mixes only codepoint
+  and paragraph index, never geometry. Geometry is recomputed from the page on every
+  open, which is correct — the cache records *which* glyphs are selectable, a text
+  property, not where they sit.
+
+Validation: X4 Pro build SUCCESS (140.24 s, RAM 30.8%, Flash 94.4%); ESP32-C3 build
+SUCCESS (117.64 s); host suite 232/232 in 4.29 s; `bin/clang-format-fix -g` applied.
 
 ### Matcha-added touch support plan
 
