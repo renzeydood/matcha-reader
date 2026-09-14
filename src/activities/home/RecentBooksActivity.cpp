@@ -340,6 +340,35 @@ void RecentBooksActivity::startLibraryScan() {
   scan_.dirStack.push_back("/");
 }
 
+size_t RecentBooksActivity::pickThumbTarget() const {
+  const size_t count = recentBooks.size();
+  if (scan_.thumbAttempted.size() != count) return scan_.thumbIndex;  // catalog swapped mid-pass
+  // On-screen first. The pass used to walk the catalog strictly from index 0, one book per idle
+  // slice, so a user who had scrolled down waited for every book above to be examined before the
+  // covers in front of them were even looked at -- which read as "covers load at random".
+  const size_t from = static_cast<size_t>(std::max(0, visibleFirstIdx_));
+  const size_t to = std::min(count, static_cast<size_t>(std::max(-1, visibleLastIdx_) + 1));
+  for (size_t i = from; i < to; i++) {
+    if (!scan_.thumbAttempted[i]) return i;
+  }
+  for (size_t i = scan_.thumbIndex; i < count; i++) {
+    if (!scan_.thumbAttempted[i]) return i;
+  }
+  for (size_t i = 0; i < scan_.thumbIndex && i < count; i++) {
+    if (!scan_.thumbAttempted[i]) return i;
+  }
+  return count;  // every book examined: the pass is done
+}
+
+void RecentBooksActivity::markThumbAttempted(const size_t index) {
+  if (index < scan_.thumbAttempted.size()) scan_.thumbAttempted[index] = true;
+  // Keep the sequential cursor ahead of the run of examined books so the fallback scans above
+  // stay cheap as the pass fills in.
+  while (scan_.thumbIndex < scan_.thumbAttempted.size() && scan_.thumbAttempted[scan_.thumbIndex]) {
+    scan_.thumbIndex++;
+  }
+}
+
 bool RecentBooksActivity::stepLibraryScan() {
   if (!scan_.active) return false;
 
@@ -347,6 +376,12 @@ bool RecentBooksActivity::stepLibraryScan() {
     if (!scan_.activeDir && scan_.dirStack.empty()) {
       if (!applyLibraryScan()) return false;
       scan_.walkDone = true;
+      // Persist the catalog here, not only when the whole pass finishes. The walk is the
+      // authoritative answer to "what is on the card"; the cover pass that follows only adds
+      // thumbnails. Deferring the write until covers were done meant a book deleted off the SD
+      // card was correctly dropped in memory and then thrown away at onExit(), so the next
+      // Library visit re-read the stale cache and showed the ghost again, forever.
+      RecentBooksStore::saveBooksToPath(recentBooks, LIBRARY_CACHE_JSON);
       return false;
     }
     scanDirectoryEntry();
@@ -366,12 +401,17 @@ bool RecentBooksActivity::stepLibraryScan() {
     thumbH = coverWidth > 0 ? coverWidth * COVER_ASPECT_DEN / COVER_ASPECT_NUM : 0;
   }
   if (thumbH <= 0) thumbH = metrics.homeCoverHeight > 0 ? metrics.homeCoverHeight : 120;
-  if (scan_.thumbIndex < recentBooks.size()) {
+  if (scan_.thumbAttempted.size() != recentBooks.size()) {
+    scan_.thumbAttempted.assign(recentBooks.size(), false);
+    scan_.thumbIndex = 0;
+  }
+  const size_t thumbIdx = pickThumbTarget();
+  if (thumbIdx < recentBooks.size()) {
     RecentBook book;
     {
       RenderLock lock{RenderLock::Try{}};
       if (!lock.held()) return false;
-      book = recentBooks[scan_.thumbIndex];
+      book = recentBooks[thumbIdx];
     }
     const auto publishBook = [this](const RecentBook& book) {
       bool changed = false;
@@ -419,7 +459,7 @@ bool RecentBooksActivity::stepLibraryScan() {
       }
       const bool completed = coverResult_.completed;
       coverResult_.pending = false;
-      if (matches && completed) scan_.thumbIndex++;
+      if (matches && completed) markThumbAttempted(thumbIdx);
       return false;
     }
     // A [HEIGHT]-templated path does NOT mean the thumb exists at the height this theme asks
@@ -474,11 +514,11 @@ bool RecentBooksActivity::stepLibraryScan() {
           coverIsMangaTemplate
               ? (mangaGridMissing ? thumbH : (mangaHomeMissing ? metrics.homeCoverHeight : SHELF_THUMB_HEIGHT))
               : thumbH;
-      if (!postCoverJob(std::move(job))) scan_.thumbIndex++;
+      if (!postCoverJob(std::move(job))) markThumbAttempted(thumbIdx);
       return false;
     }
     if ((!book.coverBmpPath.empty() && !coverIsTemplate) || (!isEpub && !isXtc)) {
-      scan_.thumbIndex++;
+      markThumbAttempted(thumbIdx);
       return false;
     }
     std::string cachePath = std::string("/.crosspoint/") + (isEpub ? "epub_" : "xtc_") +
@@ -525,7 +565,7 @@ bool RecentBooksActivity::stepLibraryScan() {
       book.coverBmpPath = cachePath + "/thumb_[HEIGHT].bmp";
       recordIndexEntry(book.path, bookSize, bookStamp, thumbH, true);
       if (!publishBook(book)) return false;
-      scan_.thumbIndex++;
+      markThumbAttempted(thumbIdx);
       return false;
     }
     // The book has no cover image to render, established by a previous visit that actually
@@ -536,7 +576,7 @@ bool RecentBooksActivity::stepLibraryScan() {
     // records a fact about the BOOK, which a failed conversion can never fake.
     if (indexed && (indexed->flags & INDEX_FLAG_NO_COVER) && indexed->fileSize == bookSize &&
         indexed->modifiedStamp == bookStamp) {
-      scan_.thumbIndex++;
+      markThumbAttempted(thumbIdx);
       return false;
     }
     // Coalesce the heap first: the cover decode needs a ~20KB contiguous block for the JPEG
@@ -558,7 +598,7 @@ bool RecentBooksActivity::stepLibraryScan() {
     job.modifiedStamp = bookStamp;
     if (!postCoverJob(std::move(job))) {
       recordIndexEntry(book.path, bookSize, bookStamp, thumbH, false);
-      scan_.thumbIndex++;
+      markThumbAttempted(thumbIdx);
     }
     return false;
   }
@@ -969,6 +1009,10 @@ void RecentBooksActivity::onExit() {
   // sees the held lock, drops any partial thumbnail and exits before activity state is cleared.
   stopCoverWorker();
   Activity::onExit();
+  // A cover pass that got part-way through still verified real books. Discarding that work
+  // meant every Library visit re-opened the same EPUBs to re-check thumbnails it had already
+  // confirmed, which is exactly the cost the index exists to avoid.
+  saveLibraryIndex();
   scan_ = LibraryScanState{};
   libraryIndex_.clear();
   recentBooks.clear();
@@ -1321,6 +1365,9 @@ void RecentBooksActivity::renderBooksTab(int contentTop, int contentHeight) {
   const int firstIdx = scrollRow * GRID_COLS;
   const int lastIdx = std::min(firstIdx + renderRows * GRID_COLS, bookCount) - 1;
   const int titledLastIdx = std::min(firstIdx + visibleRows * GRID_COLS, bookCount) - 1;
+  // Published for the cover pass: covers the user is actually looking at are generated first.
+  visibleFirstIdx_ = firstIdx;
+  visibleLastIdx_ = lastIdx;
 
   // Fill the visible window's progress badges synchronously (max 9 books, ~2 small reads each)
   // so the first paint is already correct -- the deferred background pass caused a SECOND full

@@ -146,8 +146,20 @@ class RecentBooksActivity final : public Activity, private UiAppHost {
     std::array<char, 500> nameBuf{};
     std::vector<RecentBook> results;
     size_t thumbIndex = 0;  // cover-thumb pass cursor over the live catalog
+    // One bit per catalog entry: set once a book's cover has been examined this visit, whether
+    // or not a thumbnail came out of it. The pass prefers books in the on-screen window, so a
+    // plain cursor is no longer enough to guarantee it terminates -- without this it would keep
+    // re-picking the same visible book forever.
+    std::vector<bool> thumbAttempted;
   };
   LibraryScanState scan_;
+
+  // Grid window last painted, published by renderBooksTab() for the cover pass. Plain ints:
+  // both the render and the scan slice run on the loop task.
+  int visibleFirstIdx_ = 0;
+  int visibleLastIdx_ = -1;
+  size_t pickThumbTarget() const;
+  void markThumbAttempted(size_t index);
 
   // Library index (/.crosspoint/library.idx): one record per book seen by a previous scan.
   // Without it every Library visit re-examined each book on the card -- a file open per EPUB

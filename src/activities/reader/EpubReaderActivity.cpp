@@ -30,6 +30,7 @@
 #include <numeric>
 
 #include "../../util/BookmarkFile.h"
+#include "BookStats.h"
 #include "BookmarkEntry.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
@@ -176,6 +177,13 @@ void moveFinishedBookToReadFolder(const std::string& srcPath, const std::string&
   }
 
   RECENT_BOOKS.updatePath(srcPath, dstPath, oldCachePath, newCachePath);
+  // Reading history is keyed by book path in two places -- /system/bookstats/<hash>.bin and the
+  // per-book/finished records inside reading stats. Without repointing both, finishing a book
+  // with "Move Finished Books to Read Folder" enabled erases its entire history from the UI:
+  // the book is still there, but every screen looks it up under a path that no longer exists.
+  BookStats::migratePath(srcPath.c_str(), dstPath.c_str());
+  READING_STATS_STORE.loadFromFile();
+  if (READING_STATS_STORE.updateBookPath(srcPath, dstPath)) READING_STATS_STORE.saveToFile();
   if (APP_STATE.openEpubPath == srcPath) {
     APP_STATE.openEpubPath = dstPath;
     APP_STATE.saveToFile();

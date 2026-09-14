@@ -312,6 +312,42 @@ void ReadingStatsStore::markBookFinished(const std::string& bookPath) {
   booksFinished = std::max(booksFinished, static_cast<uint16_t>(finishedBookPaths.size()));
 }
 
+bool ReadingStatsStore::updateBookPath(const std::string& oldPath, const std::string& newPath) {
+  if (oldPath.empty() || newPath.empty() || oldPath == newPath) return false;
+  bool changed = false;
+
+  // Per-book totals. If the destination already has a record (the same filename was finished,
+  // deleted and re-added), fold the two rather than leaving a duplicate the UI would show twice.
+  const auto dst = std::find_if(books.begin(), books.end(), [&](const BookReading& b) { return b.path == newPath; });
+  const auto src = std::find_if(books.begin(), books.end(), [&](const BookReading& b) { return b.path == oldPath; });
+  if (src != books.end()) {
+    if (dst != books.end()) {
+      dst->minutesRead += src->minutesRead;
+      dst->lastReadDay = std::max(dst->lastReadDay, src->lastReadDay);
+      if (dst->language.empty()) dst->language = std::move(src->language);
+      books.erase(src);
+    } else {
+      src->path = newPath;
+    }
+    changed = true;
+  }
+
+  // Repoint the finished-book entry. If newPath is already marked finished (the same filename
+  // was finished, removed and re-added), drop the old entry instead of creating a duplicate.
+  const bool dstFinished = std::any_of(finishedBookPaths.begin(), finishedBookPaths.end(),
+                                       [&](const std::string& p) { return p == newPath; });
+  const auto stale = std::remove(finishedBookPaths.begin(), finishedBookPaths.end(), oldPath);
+  if (stale != finishedBookPaths.end()) {
+    finishedBookPaths.erase(stale, finishedBookPaths.end());
+    if (!dstFinished) finishedBookPaths.push_back(newPath);
+    changed = true;
+  }
+  // booksFinished is deliberately left alone: it is a monotonic lifetime tally that must never
+  // count down (see markBookFinished), and a fold here would understate real history.
+
+  return changed;
+}
+
 uint16_t ReadingStatsStore::getMinutesForDay(uint16_t year, uint8_t month, uint8_t day) const {
   // Back to front: every caller here asks about recent days (today, this week, the month on
   // screen), which now sit at the end of a potentially years-long history.

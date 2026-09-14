@@ -310,6 +310,45 @@ TEST_F(StatsTest, BookRejectsUnsetClockAndSeparatesBooks) {
   EXPECT_EQ(other.getTotalMinutes(), 0u);
 }
 
+// Finishing a book with "Move Finished Books to Read Folder" renames the file, and every stats
+// record is keyed by path. Without migration the book's whole history vanishes from the UI.
+TEST_F(StatsTest, BookHistorySurvivesBeingMovedToTheReadFolder) {
+  const char* src = "/Japanese/moved.epub";
+  const char* dst = "/Read/moved.epub";
+  BookStats b;
+  ASSERT_TRUE(b.load(src));
+  b.recordMinutes(Y, M, 8, 42);
+  ASSERT_TRUE(b.save());
+
+  ASSERT_TRUE(BookStats::migratePath(src, dst));
+
+  BookStats moved;
+  ASSERT_TRUE(moved.load(dst));
+  EXPECT_EQ(moved.getTotalMinutes(), 42u);
+
+  BookStats old;
+  ASSERT_TRUE(old.load(src));
+  EXPECT_EQ(old.getTotalMinutes(), 0u) << "the old record must not linger as a duplicate";
+}
+
+TEST_F(StatsTest, MigratingABookWithNoHistoryIsANoOp) {
+  EXPECT_FALSE(BookStats::migratePath("/Japanese/never-read.epub", "/Read/never-read.epub"));
+  EXPECT_FALSE(BookStats::migratePath("/Japanese/same.epub", "/Japanese/same.epub"));
+}
+
+TEST_F(StatsTest, MovedBookKeepsItsTotalsAndFinishedMark) {
+  ReadingStatsStore& s = READING_STATS_STORE;
+  s.addBookMinutes("/Japanese/moved.epub", "ja", 30, Y, M, 8);
+  s.markBookFinished("/Japanese/moved.epub");
+  EXPECT_EQ(s.getBooksFinished("ja"), 1);
+
+  ASSERT_TRUE(s.updateBookPath("/Japanese/moved.epub", "/Read/moved.epub"));
+
+  EXPECT_EQ(s.getBooksFinished("ja"), 1) << "the finished tally must follow the file";
+  EXPECT_FALSE(s.updateBookPath("/Japanese/moved.epub", "/Read/moved.epub"))
+      << "a second migration has nothing left to repoint";
+}
+
 // An older layout must reset rather than error, or the screen stays blank with no way back.
 TEST_F(StatsTest, OldFormatFileIsTreatedAsNoHistory) {
   const char* path = "/Japanese/ver.epub";

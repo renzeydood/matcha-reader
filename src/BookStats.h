@@ -55,6 +55,12 @@ class BookStats {
 
   static std::string filePathFor(const char* bookPath);
 
+  // Moves this book's history to a new path. The history file is named after a hash of the book
+  // path and also stores that path inside it, so a book moved on disk (finishing one with "Move
+  // Finished Books to Read Folder" renames it into /Read) would otherwise look like a different
+  // book with no history at all. Returns true if a history existed and was migrated.
+  static bool migratePath(const char* oldPath, const char* newPath);
+
  private:
   std::string bookPath;
   uint32_t sessions = 0;

@@ -119,6 +119,30 @@ bool BookStats::load(const char* path) {
   return true;
 }
 
+bool BookStats::migratePath(const char* oldPath, const char* newPath) {
+  if (!oldPath || !newPath || !*oldPath || !*newPath || strcmp(oldPath, newPath) == 0) return false;
+
+  const std::string oldFile = filePathFor(oldPath);
+  if (!Storage.exists(oldFile.c_str())) return false;  // nothing recorded for this book
+
+  // Rewritten rather than renamed: the record stores the book path inside it as well as in its
+  // filename hash, and a file naming one path while hashing another is the kind of half-migrated
+  // state that is impossible to diagnose later.
+  BookStats stats;
+  if (!stats.load(oldPath)) {
+    LOG_ERR("BSTAT", "migrate: load failed for %s", oldPath);
+    return false;
+  }
+  stats.bookPath = newPath;
+  if (!stats.save()) {
+    LOG_ERR("BSTAT", "migrate: save failed for %s", newPath);
+    return false;  // old file deliberately left in place: losing the history is the worse outcome
+  }
+  Storage.remove(oldFile.c_str());
+  LOG_INF("BSTAT", "Migrated book stats: %s -> %s", oldPath, newPath);
+  return true;
+}
+
 bool BookStats::save() const {
   if (bookPath.empty()) return false;
   Storage.mkdir(STATS_DIR, true);

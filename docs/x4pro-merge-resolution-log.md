@@ -592,6 +592,76 @@ Read `AGENTS.md` before proceeding. Do not spawn subagents unless explicitly ask
 
 ---
 
+## Library and reading-stats bugs (MATC-012)
+
+Three device-reported bugs, all outside the five-phase touch plan, all confirmed by source analysis.
+
+### 1. Reading statistics erased when a book is finished
+
+**Symptom:** a book reaching 100% loses its entire reading history.
+
+**Cause:** with `Move Finished Books to Read Folder` enabled, finishing a book *renames the file*
+into `/Read`. Three records are keyed by book path, and none of them followed the move:
+
+| Record | Keying |
+|---|---|
+| `/system/bookstats/<hash>.bin` | 32-bit hash of the path — new path, new hash, history unreachable |
+| `ReadingStatsStore::books[].path` | still names the old location |
+| `ReadingStatsStore::finishedBookPaths` | `markBookFinished()` runs in `onExit()` with the *old* path, before the move |
+
+Nothing ever deleted the data; the identity it was filed under simply changed.
+`moveFinishedBookToReadFolder()` already migrated the cache directory, the recents entry and
+`APP_STATE.openEpubPath` — the stats were the one thing missed.
+
+**Fix:** `BookStats::migratePath()` (rewrites the record rather than renaming the file, because
+the book path is stored *inside* it as well as in its filename hash) and
+`ReadingStatsStore::updateBookPath()` (repoints the per-book totals and the finished mark,
+folding rather than duplicating if the destination already has a record). Both are called from
+`moveFinishedBookToReadFolder()` after the rename succeeds. `booksFinished` is deliberately not
+recomputed: it is a monotonic lifetime tally that must never count down.
+
+### 2. Deleted books stay in the Library
+
+**Symptom:** a book deleted from the SD card keeps appearing in the Library, permanently.
+
+**Cause:** the Library is stale-while-revalidate. `loadRecentBooks()` shows
+`/.crosspoint/library_cache.json` immediately and unverified; the background walk then builds a
+correct catalog and `applyLibraryScan()` swaps it in, dropping the deleted book from memory. But
+`finishLibraryScan()` — the only writer of `library_cache.json` — ran solely when
+`stepLibraryScan()` returned true, which required the **entire cover pass** to finish. `onExit()`
+cleared the scan state without saving. So the corrected catalog was computed and then thrown
+away on every single visit.
+
+**Fix:** persist the catalog the moment the *walk* completes, not when the covers do. The walk is
+the authoritative answer to "what is on the card"; the cover pass only adds thumbnails.
+
+### 3. Covers load inconsistently
+
+**Symptom:** some covers never appear until the Library is reopened or scrolled several times.
+
+**Causes, both fixed:**
+- The same persistence gate as bug 2: `library.idx` records which thumbnails were verified, and it
+  too was discarded unless the whole pass completed — so the per-book file opens it exists to
+  avoid were repaid on every visit. `saveLibraryIndex()` now runs in `onExit()`.
+- The cover pass walked the catalog strictly from index 0, one book per idle slice. A user
+  scrolled to row 6 waited for every book above to be examined first. The pass now prefers books
+  in the on-screen window (`visibleFirstIdx_`/`visibleLastIdx_`, published by `renderBooksTab()`),
+  falling back to the sequential cursor.
+
+  A preference alone cannot terminate, so `LibraryScanState::thumbAttempted` carries one bit per
+  catalog entry, set when a book has been examined. Cancelled jobs deliberately do **not** set it,
+  preserving the existing retry-after-idle behaviour.
+
+**Preserved on purpose:** `INDEX_FLAG_HAS_THUMB` is still confirmed with `FsHelpers::hasContent()`,
+`INDEX_FLAG_NO_COVER` is still only set when the book actually loaded and declared no cover, and
+the worker's cancel probe still avoids `RenderLock::peek()`. These encode the "never persist a
+transient failure as a permanent truth" rule and none of them were relaxed.
+
+**Verification:** 235 host tests pass (3 new, covering the stats migration); both `x4pro` and
+`default` build.
+
+---
+
 ## Earlier chronological notes
 
 Work in progress on `feature/x4pro`. Firmware and hardware validation remain pending. The CSS host suite passes (18 tests).

@@ -85,6 +85,13 @@ class ReadingStatsStore {
   uint32_t getTotalMinutes(const char* language) const;
   void markBookFinished(const std::string& bookPath);
 
+  // Repoint every path-keyed record from oldPath to newPath after the book file was moved on
+  // disk (finishing a book with "Move Finished Books to Read Folder" renames it into /Read).
+  // Without this the book's whole history is orphaned: the per-book totals and the finished
+  // tally are keyed by path, so the move reads as a different book with no history.
+  // Returns true if anything changed; the caller persists.
+  bool updateBookPath(const std::string& oldPath, const std::string& newPath);
+
   // ---- per-language views, mirroring the overall ones ----
   // Every language read, most-read first. Written into the caller's vector so the store keeps
   // no derived state.
