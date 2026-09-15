@@ -1,11 +1,11 @@
 # X4 Pro merge resolution log
 
-## Current checkpoint — 2026-09-14 (read this first)
+## Current checkpoint — 2026-09-15 (read this first)
 
 **Status: integration functionally complete and fully device-validated. No known open defects.**
 Japanese font sizing, furigana scaling and the word-lookup/translation touch work are
 device-verified by the user. Both firmware targets build and the host suite is green
-(see the Phase 5 validation checkpoint below). The five behavior-review findings have
+(235 tests; see the Phase 5 validation checkpoint below). The five behavior-review findings have
 been re-verified: three were real and are fixed, two were not defects (see that
 section); the two position fixes are confirmed on hardware.
 The Vertical Text toggle follow-up work — a settings row that showed no ON/OFF state,
@@ -13,7 +13,12 @@ overrides never persisting (critical), wrong word-lookup highlight geometry in
 horizontal mode, and a wrapped word's selection box covering whole sentences — is
 complete and device-verified as of 2026-09-15. See "Vertical-text toggle follow-up
 bugs" below.
-Local commits MATC-007 through MATC-010 are **not pushed**; push needs user approval.
+Three further bugs reported outside the phase plan — reading statistics erased when a book is
+finished, deleted books lingering in the Library, and covers reloading on every visit — are fixed
+and device-verified as of 2026-09-15. See "Library and reading-stats bugs" below. History
+orphaned before the fix is recoverable with `scripts/repair-book-stats.py`.
+Local commits MATC-007 through MATC-015 are **not pushed** beyond MATC-011; push needs user
+approval.
 This section supersedes older progress statements below, which are retained as history.
 This log is the durable resume point after usage-limit interruptions. No build is running.
 See the latest result and task table below before consulting historical failure notes.
@@ -592,9 +597,11 @@ Read `AGENTS.md` before proceeding. Do not spawn subagents unless explicitly ask
 
 ---
 
-## Library and reading-stats bugs (MATC-012)
+## Library and reading-stats bugs (MATC-012 … MATC-014)
 
-Three device-reported bugs, all outside the five-phase touch plan, all confirmed by source analysis.
+Three device-reported bugs, all outside the five-phase touch plan. All three are now fixed and
+device-verified. Bug 2 took two attempts; the first fix's reasoning is kept below because the
+assumption it got wrong is worth not repeating.
 
 ### 1. Reading statistics erased when a book is finished
 
@@ -620,6 +627,31 @@ folding rather than duplicating if the destination already has a record). Both a
 `moveFinishedBookToReadFolder()` after the rename succeeds. `booksFinished` is deliberately not
 recomputed: it is a monotonic lifetime tally that must never count down.
 
+**Recovering history orphaned before this fix.** The data is not lost. Each
+`/system/bookstats/<hash>.bin` stores the book path *inside* it as well as in its filename hash
+(`load()` compares it to detect collisions), and `reading_stats.bin` stores paths as plain text.
+A record can therefore be re-filed under the book's current path with no guesswork: read the
+stored path, find the book in `/read` under the same filename, rewrite. One-off repair script
+kept out of tree in the session workspace (`repair-book-stats.py`).
+
+Two things that script has to respect, both load-bearing:
+- The firmware composes book paths from the **actual directory entry name** it reads off the card
+  (`scanDirectoryEntry()`), so the hash depends on the real letter case — `/read` vs `/Read`.
+  Using the wrong case produces a file the firmware will never look up.
+- `std::hash<std::string>` must be reproduced exactly (32-bit MurmurHash2, seed `0xc70f6907`).
+  The script proves this against the card before writing: every file is named after the hash of
+  the path stored inside it, so reproducing all existing filenames demonstrates correctness. It
+  aborts on any mismatch rather than guessing.
+
+### 1b. A finished book was re-moved on every reopen (MATC-013)
+
+Found while verifying the recovery above. `onEndOfBookRendered()` armed the move with no
+`isInReadFolder()` check, unlike the equivalent branch in `loop()`. Reopening a finished book
+returns straight to the end-of-book screen, so the move re-armed;
+`buildReadFolderDestination()` then found the destination occupied and renamed the file to
+`<name> (2).epub`, churning the book's identity — and with it the cache directory, the recents
+entry and every path-keyed stats record — once per visit. Pre-dates the merge.
+
 ### 2. Deleted books stay in the Library
 
 **Symptom:** a book deleted from the SD card keeps appearing in the Library, permanently.
@@ -632,8 +664,26 @@ correct catalog and `applyLibraryScan()` swaps it in, dropping the deleted book 
 cleared the scan state without saving. So the corrected catalog was computed and then thrown
 away on every single visit.
 
-**Fix:** persist the catalog the moment the *walk* completes, not when the covers do. The walk is
-the authoritative answer to "what is on the card"; the cover pass only adds thumbnails.
+**First fix (MATC-012), insufficient:** persist the catalog the moment the *walk* completes rather
+than when the covers do, on the reasoning that the walk is the authoritative answer to what is on
+the card and the cover pass only adds thumbnails.
+
+That reasoning holds. The assumption underneath it did not: **the walk usually does not complete.**
+It descends into every folder at one directory entry per idle slice, and a card holding manga
+folders has thousands of entries; each slice needs 700ms of no input, and any button press
+restarts the timer. The save point was simply moved somewhere still rarely reached, and the bug
+survived unchanged on a real card.
+
+**Actual fix (MATC-014):** an existence sweep that runs *before* the walk, confirming only the
+entries the catalog already names. That is tens of lookups rather than thousands, so it finishes
+about a second after the Library opens; missing books are dropped and the catalog persisted
+immediately. The walk still follows and still has the last word on what the sweep cannot know
+about, such as newly added files.
+
+The general lesson: "persist at the end of phase X" is only a fix if phase X reliably ends.
+Both background passes here are idle-gated and cancellable by design, so neither is guaranteed to
+complete in a visit — a cheap, self-contained question (do these paths still exist?) needs its own
+fast path rather than a place in the queue behind an expensive one.
 
 ### 3. Covers load inconsistently
 
@@ -658,7 +708,9 @@ the worker's cancel probe still avoids `RenderLock::peek()`. These encode the "n
 transient failure as a permanent truth" rule and none of them were relaxed.
 
 **Verification:** 235 host tests pass (3 new, covering the stats migration); both `x4pro` and
-`default` build.
+`default` build. Device-verified 2026-09-15: completed books report their history correctly,
+covers no longer reload on every visit, and a deleted book disappears about two seconds after the
+Library opens (the idle gate) and stays gone.
 
 ---
 
