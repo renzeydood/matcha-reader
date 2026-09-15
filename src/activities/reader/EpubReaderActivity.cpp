@@ -2662,7 +2662,12 @@ void EpubReaderActivity::renderOverlayAfterPage() {
 
 void EpubReaderActivity::onEndOfBookRendered() {
   saveProgress(currentSpineIndex, 0, 1, verticalOverride, furiganaOverride);
-  pendingReadFolderMove = SETTINGS.moveFinishedToReadFolder;
+  // Same guard as the end-of-book branch in loop(): a book already in /read must not be moved
+  // again. Reopening a finished book returns straight to this screen, and without the check
+  // buildReadFolderDestination() finds the destination occupied and renames the file to
+  // "<name> (2).epub" -- churning the path, and with it the cache directory and every
+  // path-keyed stats record, once per visit.
+  pendingReadFolderMove = SETTINGS.moveFinishedToReadFolder && epub && !isInReadFolder(epub->getPath());
 
   automaticPageTurnActive = false;
   if (pendingSyncSaveError) {
