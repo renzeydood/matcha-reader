@@ -369,8 +369,63 @@ void RecentBooksActivity::markThumbAttempted(const size_t index) {
   }
 }
 
+// Confirms that the books already on screen still exist, a few per slice. Deliberately separate
+// from the tree walk: this only looks up paths the catalog already names, so it finishes in a
+// second even on a card whose walk takes minutes.
+void RecentBooksActivity::stepCatalogVerify() {
+  // Cheap enough to batch -- each is a directory lookup, not a file read or a decode.
+  constexpr size_t VERIFY_BATCH = 4;
+  for (size_t n = 0; n < VERIFY_BATCH; n++) {
+    std::string path;
+    {
+      RenderLock lock{RenderLock::Try{}};
+      if (!lock.held()) return;
+      if (scan_.verifyIndex >= recentBooks.size()) break;
+      path = recentBooks[scan_.verifyIndex].path;
+    }
+    if (path.empty() || Storage.exists(path.c_str())) {
+      scan_.verifyIndex++;
+      continue;
+    }
+    RenderLock lock{RenderLock::Try{}};
+    if (!lock.held()) return;
+    // Re-check under the lock: a cover job may have republished the catalog since the copy.
+    if (scan_.verifyIndex < recentBooks.size() && recentBooks[scan_.verifyIndex].path == path) {
+      LOG_INF("RBA", "Dropping deleted book: %s", path.c_str());
+      recentBooks.erase(recentBooks.begin() + static_cast<long>(scan_.verifyIndex));
+      scan_.verifyRemoved = true;
+    } else {
+      scan_.verifyIndex++;  // catalog moved under us; skip rather than erase the wrong entry
+    }
+  }
+
+  if (scan_.verifyIndex < recentBooks.size()) return;
+  scan_.verifyDone = true;
+  if (!scan_.verifyRemoved) return;
+
+  {
+    RenderLock lock{RenderLock::Try{}};
+    if (!lock.held()) {
+      scan_.verifyDone = false;  // retry next slice; nothing has been published yet
+      return;
+    }
+    markAllProgressPending();
+    if (shelvesLoaded) loadShelves();
+    lastRendered.valid = false;
+  }
+  // Persisted now rather than at the end of the pass: the deletion is already established, and
+  // the walk that would otherwise carry it to disk may not finish this visit.
+  RecentBooksStore::saveBooksToPath(recentBooks, LIBRARY_CACHE_JSON);
+  requestUpdate();
+}
+
 bool RecentBooksActivity::stepLibraryScan() {
   if (!scan_.active) return false;
+
+  if (!scan_.verifyDone) {
+    stepCatalogVerify();
+    return false;
+  }
 
   if (!scan_.walkDone) {
     if (!scan_.activeDir && scan_.dirStack.empty()) {

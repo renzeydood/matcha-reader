@@ -145,6 +145,16 @@ class RecentBooksActivity final : public Activity, private UiAppHost {
     std::string activeDirPath;
     std::array<char, 500> nameBuf{};
     std::vector<RecentBook> results;
+    // Existence sweep over the catalog we are already showing, run before the tree walk.
+    // The walk is the authoritative answer to what is on the card, but it descends into every
+    // folder one directory entry per idle slice -- a card with manga folders makes that
+    // thousands of slices, and any button press restarts the idle timer, so it frequently never
+    // completes in a visit. A book deleted off the card therefore kept reappearing. Confirming
+    // the entries we already hold costs one lookup each (tens, not thousands) and drops the
+    // ghost within a second of opening the Library.
+    size_t verifyIndex = 0;
+    bool verifyDone = false;
+    bool verifyRemoved = false;
     size_t thumbIndex = 0;  // cover-thumb pass cursor over the live catalog
     // One bit per catalog entry: set once a book's cover has been examined this visit, whether
     // or not a thumbnail came out of it. The pass prefers books in the on-screen window, so a
@@ -160,6 +170,7 @@ class RecentBooksActivity final : public Activity, private UiAppHost {
   int visibleLastIdx_ = -1;
   size_t pickThumbTarget() const;
   void markThumbAttempted(size_t index);
+  void stepCatalogVerify();
 
   // Library index (/.crosspoint/library.idx): one record per book seen by a previous scan.
   // Without it every Library visit re-examined each book on the card -- a file open per EPUB
